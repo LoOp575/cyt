@@ -1,0 +1,557 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  FlaskConical,
+  RefreshCw,
+  Search,
+  ShieldAlert,
+} from "lucide-react";
+import { fetchScreen, searchAssets } from "../lib/api";
+import { useLiveTickers } from "../lib/useLiveTickers";
+import { fmtPct, fmtPrice, fmtProb, fmtUsdCompact } from "../lib/format";
+import VerdictBadge from "../components/VerdictBadge";
+import ScoreBar from "../components/ScoreBar";
+import StatTile from "../components/StatTile";
+
+const VERDICT_FILTERS = [
+  { id: "ALL", label: "All" },
+  { id: "LONG", label: "Long candidates" },
+  { id: "WATCH", label: "Watchlist" },
+  { id: "NEUTRAL", label: "Neutral" },
+  { id: "NO_SIGNAL", label: "No signal" },
+  { id: "AVOID", label: "Avoid" },
+];
+
+const SCOPES = [
+  { id: "top18", limit: 18, label: "Top 18" },
+  { id: "top40", limit: 40, label: "Top 40" },
+  { id: "all", limit: 150, label: "Semua yang lolos syarat" },
+];
+
+// Minimum daily history the model needs (mirror of backend MIN_HISTORY).
+const MIN_BARS = 61;
+
+const SORTERS = {
+  signal: (r) => r.scores?.signal ?? 0,
+  quality: (r) => r.scores?.demandQuality ?? 0,
+  organic: (r) => r.features?.gOrganic ?? -Infinity,
+  change: (r) => r.market?.priceChangePercent ?? 0,
+  volume: (r) => r.market?.quoteVolume ?? 0,
+  pacc: (r) => r.scores?.pAcceleration ?? 0,
+};
+
+function SkeletonRows({ rows = 8 }) {
+  return (
+    <>
+      {Array.from({ length: rows }).map((_, i) => (
+        <tr key={i}>
+          {Array.from({ length: 10 }).map((__, j) => (
+            <td key={j} className="px-4 py-3">
+              <div className="skeleton h-4 w-full" style={{ opacity: 1 - i * 0.09 }} />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
+}
+
+export default function DashboardPage() {
+  const navigate = useNavigate();
+  const [state, setState] = useState({ loading: true, error: null, payload: null });
+  const [query, setQuery] = useState("");
+  const [verdict, setVerdict] = useState("ALL");
+  const [sortKey, setSortKey] = useState("signal");
+  const [sortDir, setSortDir] = useState("desc");
+  const [refreshing, setRefreshing] = useState(false);
+  const [scope, setScope] = useState("top18");
+  const scopeLimit = SCOPES.find((s) => s.id === scope)?.limit ?? 18;
+  // Hasil pencarian dari SELURUH daftar bursa (bukan hanya baris yang dimuat).
+  const [found, setFound] = useState({ loading: false, matches: [], universeSize: 0, error: null });
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  const load = async (limit = scopeLimit) => {
+    try {
+      setRefreshing(true);
+      const payload = await fetchScreen(limit);
+      setState({ loading: false, error: null, payload });
+    } catch (err) {
+      setState((s) => ({ loading: false, error: err.message || "Failed to load screen.", payload: s.payload }));
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    load(scopeLimit);
+  }, [scopeLimit]);
+
+  // Cari di seluruh bursa: satu request daftar ticker, bukan memuat candle.
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 1) {
+      setFound({ loading: false, matches: [], universeSize: 0, error: null });
+      return undefined;
+    }
+    let alive = true;
+    const timer = setTimeout(() => {
+      setFound((f) => ({ ...f, loading: true, error: null }));
+      searchAssets(q)
+        .then((d) => {
+          if (!alive) return;
+          setFound({
+            loading: false,
+            matches: d.matches || [],
+            universeSize: d.universeSize || 0,
+            error: d.error || null,
+          });
+        })
+        .catch((err) => {
+          if (!alive) return;
+          setFound({ loading: false, matches: [], universeSize: 0, error: err.message || "Pencarian gagal." });
+        });
+    }, 220);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [query]);
+
+  const rows = state.payload?.data ?? [];
+  const rowSymbols = useMemo(() => rows.map((r) => r.symbol), [rows]);
+  const { ticks: liveTicks, live } = useLiveTickers(rowSymbols);
+
+  const filtered = useMemo(() => {
+    let out = rows.filter((r) => r.ok !== false);
+    if (verdict !== "ALL") out = out.filter((r) => r.verdict === verdict);
+    if (query.trim()) {
+      const q = query.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+      out = out.filter((r) => r.symbol.includes(q));
+    }
+    const dir = sortDir === "desc" ? -1 : 1;
+    const getter = SORTERS[sortKey] || SORTERS.signal;
+    return [...out].sort((a, b) => (getter(a) - getter(b)) * dir);
+  }, [rows, verdict, query, sortKey, sortDir]);
+
+  const summary = state.payload?.summary;
+  const coverage = state.payload?.liveCoverage || null;
+  // Demo penuh hanya saat seluruh chain gagal. Sebagian gagal = banner "parsial".
+  const isDemo = state.payload ? !state.payload.live : false;
+  // Sebagian live: universe asli tapi sebagian klines gagal / riwayat koin terlalu pendek.
+  const isPartial =
+    isDemo && coverage && coverage.universeLive && coverage.klinesLive > 0;
+  // Simbol yang benar-benar jatuh ke seed = total - punya candle asli.
+  const failedKlines = coverage
+    ? Math.max(0, (coverage.klinesTotal || 0) - (coverage.klinesLive || 0))
+    : 0;
+  // Riwayat asli tapi terlalu pendek (koin baru) — bukan data demo, bukan juga bisa dinilai.
+  const isShortHistory =
+    isDemo && coverage && coverage.universeLive && coverage.klinesLive > 0 &&
+    coverage.klinesShort > 0 && coverage.klinesUsable === 0;
+
+  const toggleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    } else {
+      setSortKey(key);
+      setSortDir("desc");
+    }
+  };
+
+  const SortIcon = ({ column }) =>
+    sortKey !== column ? (
+      <ArrowUpDown size={11} strokeWidth={1.75} className="opacity-40" />
+    ) : sortDir === "desc" ? (
+      <ArrowDown size={11} strokeWidth={2.25} className="text-pine-700" />
+    ) : (
+      <ArrowUp size={11} strokeWidth={2.25} className="text-pine-700" />
+    );
+
+  return (
+    <div className="mx-auto max-w-7xl px-4 sm:px-6">
+      {/* ================= hero ================= */}
+      <section className="pt-10 md:pt-14 pb-8 md:pb-10 border-b border-line">
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
+          <div className="max-w-2xl">
+            <p className="micro-label text-gold-600 !text-[10px]">Deferred-demand quality model · Daily OHLCV</p>
+            <h1 className="font-display font-semibold tracking-tight text-ink text-4xl sm:text-5xl xl:text-[56px] leading-[1.05] mt-3">
+              Demand tells you
+              <br />
+              <span className="italic text-pine-700">before price does.</span>
+            </h1>
+            <p className="mt-4 text-[15px] leading-6 text-muted max-w-xl">
+              Meridian adapts the deferred-revenue quality model to crypto: it separates{" "}
+              <span className="text-ink font-medium">organic unit demand</span> from price-driven
+              volume, scores retention and buy-side conversion, and flags filing-style instability —
+              so you can screen for accumulation, not headlines.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <button onClick={() => load()} disabled={refreshing} className="btn-primary focus-ring disabled:opacity-60">
+              <RefreshCw size={15} strokeWidth={2} className={refreshing ? "animate-spin" : ""} />
+              {refreshing ? "Refreshing…" : "Refresh screen"}
+            </button>
+          </div>
+        </div>
+
+        {/* demo banner */}
+        {isDemo && (
+          <div className="mt-6 flex items-start gap-3 rounded-xl border border-gold-300 bg-gold-100 px-4 py-3">
+            <FlaskConical size={17} strokeWidth={1.75} className="text-gold-700 mt-0.5 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-[12px] leading-5 text-gold-700">
+                {isShortHistory ? (
+                  <>
+                    <span className="font-semibold">Riwayat koin terlalu pendek.</span> Harga{" "}
+                    {coverage.klinesLive}/{coverage.klinesTotal} simbol berhasil diambil dari bursa
+                    live, tetapi usianya belum mencapai 61 candle harian sehingga belum bisa dinilai
+                    model. Yang tampil = data <em>asli</em> dari bursa, bukan simulasi.
+                  </>
+                ) : isPartial ? (
+                  <>
+                    <span className="font-semibold">Sebagian data tidak live.</span> Universe live berhasil:
+                    {" "}{coverage.klinesLive}/{coverage.klinesTotal} simbol punya candle <em>asli</em> dari bursa,
+                    {" "}{coverage.klinesUsable} di antaranya cukup ({MIN_BARS} hari) untuk dinilai model
+                    {coverage.klinesShort > 0 && (
+                      <>, sedangkan {coverage.klinesShort} sisanya koin baru yang riwayatnya belum cukup</>
+                    )}
+                    {failedKlines > 0 ? (
+                      <>, dan {failedKlines} simbol gagal total sehingga memakai candle seed</>
+                    ) : (
+                      <> — tidak ada simbol yang memakai candle seed</>
+                    )}. Bukan data demo penuh.
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold">Demo data.</span> Server ini tidak bisa menjangkau
+                    exchange/aggregator live sekarang (sering karena IP server diblokir sumber — mis.
+                    Binance geo-restrict — atau timeout/rate-limit). Yang tampil = candle sintetis
+                    deterministik 16 koin, <em>bukan</em> data pasar nyata.
+                  </>
+                )}
+              </p>
+              {Array.isArray(state.payload?.debug) && state.payload.debug.length > 0 && (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-[10.5px] font-mono uppercase tracking-micro text-gold-700/80 hover:text-gold-700">
+                    Kenapa live gagal? ({state.payload.debug.length} alasan)
+                  </summary>
+                  <ul className="mt-1.5 rounded-lg border border-gold-200 bg-paper px-3 py-2 font-mono text-[10.5px] leading-5 text-ink/80 max-h-40 overflow-y-auto">
+                    {state.payload.debug.map((reason, i) => (
+                      <li key={i}>{String(reason)}</li>
+                    ))}
+                  </ul>
+                  <p className="mt-1.5 text-[10.5px] leading-4 text-gold-700/80">
+                    Bacaan: <code className="bg-paper px-1 rounded border border-gold-200">only N candles</code> berarti
+                    bursa <em>menjawab</em> dengan data asli, hanya saja koinnya belum berumur {MIN_BARS} hari —
+                    bukan kegagalan jaringan. Yang benar-benar gagal ditandai <code className="bg-paper px-1 rounded border border-gold-200">HTTP 4xx/5xx</code>,
+                    DNS, atau timeout. <code className="bg-paper px-1 rounded border border-gold-200">SCREEN_SOURCE=live</code> tidak
+                    memperbaiki ini; ia hanya memaksa label "live".
+                  </p>
+                </details>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* ================= summary tiles ================= */}
+      <section className="py-6 grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatTile label="Universe" value={summary ? summary.universe : "—"} sub="Pairs dinilai di layar ini (riwayat ≥61 hari)" />
+        <StatTile label="Long candidates" value={summary ? summary.longCandidates : "—"} sub="Demand-quality criteria met" tone="pine" />
+        <StatTile label="Watchlist" value={summary ? summary.watchlist : "—"} sub="Positive demand, awaiting confirmation" tone="gold" />
+        <StatTile label="Avoid / red flags" value={summary ? summary.avoid : "—"} sub="Low-quality growth or instability" tone="red" />
+      </section>
+
+      {state.payload?.criteria && (() => {
+        // Angka-angka ini sengaja dipisah: klaim ">=61 candle" hanya berlaku untuk
+        // pair yang benar-benar diperiksa, bukan seluruh pool volume.
+        const c = state.payload.criteria;
+        const examined = c.examined ?? c.universeTotal ?? "?";
+        const scorable = c.scorable ?? null;
+        const tooShort = c.tooShort ?? 0;
+        const pool = c.universeTotal ?? "?";
+        return (
+          <p className="pb-3 text-[11px] leading-5 text-faint -mt-2">
+            Menampilkan <span className="text-ink font-semibold">{c.returned}</span> pair dengan candle{" "}
+            <em>asli</em> dan riwayat cukup dari{" "}
+            <span className="text-ink font-semibold">{examined}</span> pair teratas yang diperiksa
+            {c.minQuoteVolume ? ` (volume 24h ≥ $${Math.round(c.minQuoteVolume / 1e6)} jt · bukan stablecoin)` : ""}.
+            {scorable != null && (
+              <> {scorable} bisa dinilai model{tooShort > 0 ? `, ${tooShort} belum cukup umur (${MIN_BARS} hari)` : ""}.</>
+            )}
+            {pool !== examined && (
+              <> Pool lebih luas: {pool} pair lolos filter volume; riwayatnya belum diperiksa supaya request tetap cepat.</>
+            )}
+            {" "}Sumber candle: <span className="text-ink">{state.payload.source || "bursa"}</span>
+            {" · "}
+            {state.payload.live
+              ? "semua baris data asli dari bursa"
+              : `${c.returned - (c.scorable ?? c.returned) > 0 ? c.tooShort : 0} baris belum bisa dinilai`}.
+          </p>
+        );
+      })()}
+
+      {/* ================= controls ================= */}
+      <section className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 pb-4">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="micro-label !text-[9px] mr-1">Universe</span>
+          {SCOPES.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => setScope(s.id)}
+              disabled={refreshing}
+              className={`focus-ring rounded-full px-3 py-1.5 text-[12px] font-medium border transition-colors ${
+                scope === s.id
+                  ? "bg-pine-800 text-paper border-pine-800"
+                  : "bg-card text-muted border-lineStrong hover:text-ink hover:border-pine-400"
+              }`}
+            >
+              {s.label}
+            </button>
+          ))}
+          <span className="hidden lg:inline-block w-px h-5 bg-line mx-1" aria-hidden="true" />
+          {VERDICT_FILTERS.map((f) => (
+            <button
+              key={f.id}
+              onClick={() => setVerdict(f.id)}
+              className={`focus-ring rounded-full px-3 py-1.5 text-[12px] font-medium border transition-colors ${
+                verdict === f.id
+                  ? "bg-pine-800 text-paper border-pine-800"
+                  : "bg-card text-muted border-lineStrong hover:text-ink hover:border-pine-400"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <div className="relative block md:w-72">
+          <Search size={15} strokeWidth={1.75} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onFocus={() => setSearchOpen(true)}
+            placeholder="Cari koin di Binance — mis. SOL"
+            className="focus-ring w-full rounded-full border border-lineStrong bg-card pl-10 pr-4 py-2.5 text-[13px] placeholder:text-faint"
+            aria-label="Cari koin di seluruh daftar bursa"
+            aria-expanded={searchOpen && query.trim().length > 0}
+          />
+          {query.trim().length > 0 && (
+            <button
+              onClick={() => { setQuery(""); setSearchOpen(false); }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono uppercase tracking-micro text-faint hover:text-ink"
+              aria-label="Bersihkan pencarian"
+            >
+              clear
+            </button>
+          )}
+
+          {searchOpen && query.trim().length > 0 && (
+            <div className="absolute z-20 mt-2 w-full md:w-[22rem] right-0 rounded-xl border border-lineStrong bg-card shadow-lg overflow-hidden">
+              <div className="px-3 py-2 border-b border-line bg-paper">
+                <p className="text-[10px] leading-4 text-muted">
+                  {found.loading
+                    ? "Mencari di seluruh daftar bursa…"
+                    : found.error
+                    ? found.error
+                    : found.matches.length > 0
+                    ? `${found.matches.length} pair cocok dari ${found.universeSize} pair USDT di bursa`
+                    : `Tidak ada pair USDT yang cocok dari ${found.universeSize} pair di bursa`}
+                </p>
+              </div>
+              {found.matches.length > 0 ? (
+                <ul className="max-h-72 overflow-y-auto">
+                  {found.matches.map((m) => (
+                    <li key={m.symbol}>
+                      <button
+                        onClick={() => {
+                          setSearchOpen(false);
+                          navigate(`/token/${m.symbol}`);
+                        }}
+                        className="w-full flex items-center justify-between gap-3 px-3 py-2 text-left hover:bg-pine-50 transition-colors"
+                      >
+                        <span className="min-w-0">
+                          <span className="block text-[12.5px] font-semibold text-ink">
+                            {m.base}<span className="text-faint font-normal">/USDT</span>
+                          </span>
+                          <span className="block text-[10px] text-faint">
+                            {m.match === "exact" ? "persis" : m.match === "prefix" ? "awalan" : "mengandung"} · vol 24h {fmtUsdCompact(m.quoteVolume)}
+                          </span>
+                        </span>
+                        <span className="text-right shrink-0">
+                          <span className="block font-mono text-[11.5px] text-ink">${fmtPrice(m.lastPrice)}</span>
+                          <span className={`block font-mono text-[10px] ${m.priceChangePercent >= 0 ? "text-up" : "text-down"}`}>
+                            {m.priceChangePercent >= 0 ? "+" : ""}{m.priceChangePercent.toFixed(2)}%
+                          </span>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                !found.loading && (
+                  <div className="px-3 py-3">
+                    <p className="text-[11.5px] text-muted leading-5">
+                      {found.error
+                        ? "Daftar bursa tidak bisa dibaca dari server ini (bukan berarti koinnya tidak ada). Coba lagi sebentar."
+                        : "Tidak ada pair USDT dengan ticker itu di Binance. Periksa ejaannya — daftar ini mencakup seluruh pair bursa, bukan hanya 18 yang tampil."}
+                    </p>
+                  </div>
+                )
+              )}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* ================= table ================= */}
+      <section className="card overflow-hidden mb-10 animate-fade-up">
+        <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-line">
+          <div>
+            <h2 className="font-display text-lg font-semibold tracking-tight">Ranked screen</h2>
+            <p className="text-[11px] text-muted mt-0.5">Click any row for the full breakdown · sorted by signal by default</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="chip border-lineStrong text-muted">Avg signal {summary ? summary.avgSignal.toFixed(0) : "—"}</span>
+            {live && (
+              <span className="chip-live" title="Prices streaming live from Binance public WebSocket">
+                <span className="live-dot" /> Live
+              </span>
+            )}
+          </div>
+        </div>
+
+        {state.error && (
+          <div className="mx-5 mt-4 flex items-start gap-3 rounded-xl border border-[#E3B7AC] bg-[#F6E4E0] px-4 py-3">
+            <ShieldAlert size={17} className="text-[#8A3324] mt-0.5 shrink-0" />
+            <div className="text-[12px] text-[#8A3324]">
+              <p className="font-semibold">Screen failed to load</p>
+              <p className="mt-0.5">{state.error}</p>
+              <button onClick={() => load()} className="mt-2 underline underline-offset-2 font-medium">Try again</button>
+            </div>
+          </div>
+        )}
+
+        <div className="overflow-x-auto">
+          <table className="data-table min-w-[1080px]">
+            <thead>
+              <tr>
+                <th className="w-10">#</th>
+                <th>Asset</th>
+                <th className="text-right">Price</th>
+                <th className="text-right sortable" onClick={() => toggleSort("change")}>
+                  <span className="inline-flex items-center gap-1">24h <SortIcon column="change" /></span>
+                </th>
+                <th className="text-right sortable" onClick={() => toggleSort("volume")}>
+                  <span className="inline-flex items-center gap-1">24h vol <SortIcon column="volume" /></span>
+                </th>
+                <th className="text-right sortable" onClick={() => toggleSort("organic")}>
+                  <span className="inline-flex items-center gap-1">Organic Δ30d <SortIcon column="organic" /></span>
+                </th>
+                <th className="sortable w-40" onClick={() => toggleSort("quality")}>
+                  <span className="inline-flex items-center gap-1">Quality <SortIcon column="quality" /></span>
+                </th>
+                <th className="sortable w-40" onClick={() => toggleSort("signal")}>
+                  <span className="inline-flex items-center gap-1">Signal <SortIcon column="signal" /></span>
+                </th>
+                <th className="text-right sortable" onClick={() => toggleSort("pacc")}>
+                  <span
+                    className="inline-flex items-center gap-1"
+                    title="p(accel) = sigmoid heuristik atas fitur demand — BELUM terkalibrasi (lihat tab Kalibrasi)."
+                  >
+                    p(accel)† <SortIcon column="pacc" />
+                  </span>
+                </th>
+                <th>Verdict</th>
+              </tr>
+            </thead>
+            <tbody>
+              {state.loading ? (
+                <SkeletonRows />
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="py-14 text-center">
+                    <p className="font-display text-lg text-ink">Nothing matches that filter.</p>
+                    <p className="text-[12px] text-muted mt-1">Clear the search or pick a different verdict.</p>
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((r, i) => {
+                  const f = r.features || {};
+                  const s = r.scores || {};
+                  const m = r.market || {};
+                  const lt = liveTicks[r.symbol];
+                  const chg = lt?.changePercent ?? m.priceChangePercent ?? 0;
+                  const price = lt?.price ?? r.price;
+                  const quoteVol = lt?.quoteVolume ?? m.quoteVolume;
+                  const org = f.gOrganic ?? 0;
+                  return (
+                    <tr key={r.symbol} className="row-link" onClick={() => navigate(`/token/${r.symbol}`)}>
+                      <td className="font-mono text-[11px] text-faint">{String(i + 1).padStart(2, "0")}</td>
+                      <td>
+                        <div className="flex items-center gap-2.5">
+                          <span className="grid place-items-center w-8 h-8 rounded-lg bg-pine-50 border border-pine-100 font-display text-[13px] font-semibold text-pine-800">
+                            {r.symbol.replace(/USDT$/, "").slice(0, 2)}
+                          </span>
+                          <span>
+                            <span className="block font-semibold text-[13px] tracking-tight text-ink">
+                              {r.symbol.replace(/USDT$/, "")}
+                              <span className="text-faint font-normal">/USDT</span>
+                            </span>
+                            <span className="block text-[10px] uppercase tracking-micro text-faint">
+                              {r.sources?.klines && r.sources.klines !== "seed-fallback" ? "binance" : "seed"}
+                            </span>
+                          </span>
+                        </div>
+                      </td>
+                      <td className="text-right font-mono text-[12px] tabular-nums text-ink">${fmtPrice(price)}</td>
+                      <td className={`text-right font-mono text-[12px] tabular-nums ${chg >= 0 ? "text-up" : "text-down"}`}>
+                        {chg >= 0 ? "+" : ""}{chg.toFixed(2)}%
+                      </td>
+                      <td className="text-right font-mono text-[12px] tabular-nums text-muted">{fmtUsdCompact(quoteVol)}</td>
+                      <td className={`text-right font-mono text-[12px] tabular-nums font-semibold ${org >= 0 ? "text-up" : "text-down"}`}>
+                        {fmtPct(org, { signed: true, digits: 1 })}
+                      </td>
+                      <td><ScoreBar label="" value={s.demandQuality ?? 0} tone="pine" /></td>
+                      <td><ScoreBar label="" value={s.signal ?? 0} tone="gold" /></td>
+                      <td className="text-right font-mono text-[12px] tabular-nums text-ink">{fmtProb(s.pAcceleration)}</td>
+                      <td>
+                        <div className="flex flex-col gap-1 items-start">
+                          <VerdictBadge tone={r.verdictTone} label={r.verdictLabel || r.verdict} />
+                          {r.verdict === "INSUFFICIENT_DATA" && r.bars ? (
+                            <span
+                              className="font-mono text-[9.5px] text-muted"
+                              title={`Riwayat asli dari bursa, tapi baru ${r.bars} candle harian (butuh ${r.minBars}).`}
+                            >
+                              {r.bars}/{r.minBars} candle
+                            </span>
+                          ) : null}
+                          {r.unlock && r.unlock.percentOfMcap != null ? (
+                            <span
+                              className="font-mono text-[9.5px] text-[#8A3324] border border-[#E3B7AC] bg-[#F6E4E0] rounded px-1.5 py-0.5"
+                              title={`Unlock ~${r.unlock.percentOfMcap.toFixed(1)}% market cap pada ${r.unlock.date || "30 hari ke depan"} (CryptoRank). Gate: >=1% WATCH, >=3% AVOID.`}
+                            >
+                              unlock {r.unlock.percentOfMcap.toFixed(1)}%
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="px-5 py-3 border-t border-line flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[10px] text-faint max-w-lg leading-4">
+            Organic Δ = growth in unit (base-asset) volume, price/mix effect removed. Lead = organic demand growth minus price growth. Signal &gt; 55 with p(accel) &gt; 60% and price &gt; VWAP-20 = long candidate. † p(accel) adalah probabilitas heuristik belum terkalibrasi. Chip <em>unlock</em> = jadwal token unlock 30 hari dari CryptoRank (≥1% mcap menurunkan LONG ke WATCH, ≥3% ke AVOID). Prices tick live from Binance public WebSocket when connected.
+          </p>
+          <span className="micro-label !text-[9px]">{filtered.length} shown</span>
+        </div>
+      </section>
+    </div>
+  );
+}
