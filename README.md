@@ -15,7 +15,7 @@ satu-per-satu sesuai layer.
 | CryptoRank | `cryptorank.py` (v3) + `cryptorank_vesting.py` (v2) | Endpoint plan berbeda & saling melengkapi: v3 = market table/unlocks/funding-investor, v2 = search/detail/vesting. |
 | Neuron | `neuron_core` + `neuron_memory` + `neuron_logistic` + `weight_lab` | Self-test lulus semua: RMSProp + surprise gate + regime switch + Wilson pattern trust + gerbang Brier/AUC/precision. |
 | Server | `server.py` lean (15 routes) | 38 route disederhanakan: layer eksperimental (fp-v2 compare, fp-live, calibrate v1) dibuang. |
-| Unlock gate | `gates.py` | Dipisah dari screener supaya modul v2 tetap byte-identik dengan sumbernya. |
+| Unlock information | `cryptorank.py` + `cryptorank_vesting.py` | Hanya metadata pasokan/jadwal untuk tampilan; tidak masuk ke scoring atau verdict. |
 
 ## Cara jalan (lokal)
 
@@ -49,7 +49,7 @@ dengan realized return -> state baru -> `refit` (usulan) -> `validate`
 ## Alur belajar neuron
 
 ```
-predict (dendrite dari screen-v2 + fp + unlock)  ->  episode PENDING
+predict (dendrite dari screen-v2 + fp)  ->  episode PENDING
 episode/close (+4% misal)                        ->  episode CLOSED, RMSProp update
 episode >= 30 CLOSED                             ->  refit = usulan bobot baru
 episode >= 50 CLOSED                             ->  weight_lab: Brier/AUC/precision
@@ -69,7 +69,7 @@ backend/
 ├── neuron_logistic.py      Guru offline refit (split temporal 75/25)
 ├── weight_lab.py           Gerbang validasi bobot (Brier/AUC/precision + relatif)
 ├── fokker_planck.py        PDE solver (isolated, sumber dendrite fp)
-├── gates.py                VERDICT_META + unlock gate (dipisah dari screener)
+├── gates.py                VERDICT_META (label dan urutan verdict saja)
 └── server.py               FastAPI lean, 15 routes, stateless
 ```
 
