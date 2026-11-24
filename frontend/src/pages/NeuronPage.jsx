@@ -1,457 +1,324 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Brain, Zap, CheckCircle2, AlertTriangle, RotateCcw, Activity, FlaskConical, ShieldCheck } from "lucide-react";
 import {
-  neuronPredict,
-  neuronCloseEpisode,
-  neuronRefit,
-  neuronValidate,
-  neuronStats,
+  Activity, ArrowDownRight, ArrowLeft, ArrowUpRight, BrainCircuit, Check,
+  ChevronRight, CircleAlert, Clock3, Database, GitBranch, History,
+  RefreshCw, ShieldCheck, SlidersHorizontal, Sparkles, Target, Waves,
+} from "lucide-react";
+import {
+  fetchNeuronLiveStatus, fetchNeuronLiveJournal, fetchNeuronLiveAudit,
 } from "../lib/api";
 
-const NEURON_KEY = "meridian:neuron:state";
-const MEMORY_KEY = "meridian:memory:state";
+const FEATURE_META = [
+  ["screenSignal", "Screen signal", "Screen-v2"],
+  ["demandQuality", "Demand quality", "Demand"],
+  ["stability", "Stability", "Flow"],
+  ["fpStable", "FP stable", "Fokker–Planck"],
+  ["fpTail", "FP tail", "Tail risk"],
+  ["fpLiveDir", "FP live direction", "Intraday"],
+  ["rvol", "Relative volume", "Volume"],
+  ["vwapDist", "VWAP distance", "Price"],
+  ["bias", "Bias", "Constant"],
+];
+const TABS = [
+  ["live", "Live neural", Activity],
+  ["synapse", "Synapse & weights", GitBranch],
+  ["journal", "Prediction journal", History],
+  ["audit", "Self audit", ShieldCheck],
+];
 
-function loadState(key) {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+function fmt(value, digits = 3) {
+  return Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : "—";
 }
-function saveState(key, val) {
-  try {
-    localStorage.setItem(key, JSON.stringify(val));
-  } catch {
-    /* quota / private mode — ignore */
-  }
+function fmtPrice(value) {
+  return Number.isFinite(Number(value))
+    ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(Number(value))
+    : "—";
 }
-
-const VERDICT_TONE = {
-  LONG: { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200" },
-  SHORT: { bg: "bg-rose-50", text: "text-rose-700", border: "border-rose-200" },
-  WATCH: { bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200" },
-  NEUTRAL: { bg: "bg-pine-50", text: "text-pine-700", border: "border-pine-200" },
-};
-
-function VerdictBadge({ verdict }) {
-  const v = (verdict || "NEUTRAL").toUpperCase();
-  const tone = VERDICT_TONE[v] || VERDICT_TONE.NEUTRAL;
-  return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-mono font-semibold uppercase tracking-wide border ${tone.bg} ${tone.text} ${tone.border}`}>
-      {v}
-    </span>
-  );
+function fmtTime(value) {
+  if (!value) return "—";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("id-ID", { hour12: false });
 }
-
-function StatTile({ label, value, hint }) {
-  return (
-    <div className="card p-3">
-      <p className="micro-label !text-[9px]">{label}</p>
-      <p className="font-display text-xl font-semibold text-ink mt-1">{value}</p>
-      {hint && <p className="text-[10px] text-faint mt-0.5">{hint}</p>}
+function tone(direction) {
+  const d = String(direction || "").toUpperCase();
+  if (d === "UP" || d === "LONG") return "up";
+  if (d === "DOWN" || d === "SHORT" || d === "AVOID") return "down";
+  return "flat";
+}
+function Stat({ label, value, detail, accent = "" }) {
+  return <div className="rounded-xl border border-line bg-card p-3 sm:p-4 min-w-0">
+    <div className="micro-label">{label}</div>
+    <div className={`mt-2 font-display text-2xl sm:text-[28px] font-semibold tracking-tight ${accent}`}>{value ?? "—"}</div>
+    {detail && <div className="mt-1 text-[11px] text-muted truncate">{detail}</div>}
+  </div>;
+}
+function Signal({ label, state }) {
+  const ok = state === true;
+  return <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-mono ${ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+    <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-emerald-500" : "bg-amber-500"}`} />{label}
+  </span>;
+}
+function NeuralMap({ weights = {}, contributions = {} }) {
+  const nodes = [
+    { id: "screenSignal", x: 34, y: 42 }, { id: "demandQuality", x: 34, y: 105 },
+    { id: "stability", x: 34, y: 168 }, { id: "fpStable", x: 34, y: 231 },
+    { id: "fpTail", x: 34, y: 294 }, { id: "fpLiveDir", x: 34, y: 357 },
+    { id: "rvol", x: 34, y: 420 }, { id: "vwapDist", x: 34, y: 483 },
+    { id: "bias", x: 34, y: 546 },
+  ];
+  return <div className="neural-map relative overflow-hidden rounded-2xl border border-[#203B34] bg-[#0B1916] p-3 sm:p-5">
+    <div className="absolute inset-0 neural-grid opacity-50" />
+    <div className="relative flex items-center justify-between gap-2 text-[9px] uppercase tracking-[.18em] text-[#89A99A]">
+      <span>Input dendrites</span><span>Synaptic pathways</span><span>Output</span>
     </div>
-  );
-}
-
-function DendriteContributions({ contributions }) {
-  if (!contributions) return null;
-  const entries = Object.entries(contributions).filter(([k]) => k !== "bias");
-  const maxAbs = Math.max(0.0001, ...entries.map(([, v]) => Math.abs(v)));
-  return (
-    <div className="mt-3 space-y-1">
-      {entries.map(([name, val]) => {
-        const pct = Math.abs(val) / maxAbs;
-        const pos = val >= 0;
-        return (
-          <div key={name} className="flex items-center gap-2 text-[11px]">
-            <span className="font-mono text-muted w-28 shrink-0">{name}</span>
-            <div className="relative flex-1 h-3 bg-pine-50 rounded">
-              <div
-                className={`absolute top-0 h-3 rounded ${pos ? "bg-emerald-400 left-1/2" : "bg-rose-400 right-1/2"}`}
-                style={{ width: `${(pct * 50).toFixed(1)}%` }}
-              />
-              <div className="absolute left-1/2 top-0 h-3 w-px bg-line" />
-            </div>
-            <span className={`font-mono w-16 text-right ${pos ? "text-emerald-700" : "text-rose-700"}`}>
-              {val >= 0 ? "+" : ""}{val.toFixed(4)}
-            </span>
-          </div>
-        );
+    <svg viewBox="0 0 760 590" role="img" aria-label="Diagram jaringan neuron dengan sembilan input yang terhubung ke neuron utama dan output" className="relative mt-3 w-full min-w-[520px]">
+      <defs>
+        <radialGradient id="neuronGlow"><stop offset="0%" stopColor="#6EE7B7" stopOpacity=".9"/><stop offset="100%" stopColor="#34D399" stopOpacity=".08"/></radialGradient>
+        <filter id="softGlow"><feGaussianBlur stdDeviation="5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      </defs>
+      {nodes.map((n, i) => {
+        const c = Number(contributions[n.id] || 0);
+        const w = Number(weights[n.id] || 0);
+        const color = c >= 0 ? "#4ADE80" : "#FB7185";
+        const opacity = Math.max(.18, Math.min(.95, Math.abs(w) * 1.8));
+        return <g key={n.id}>
+          <path d={`M 104 ${n.y} C 210 ${n.y}, 230 294, 332 294`} stroke={color} strokeWidth={1 + Math.min(4, Math.abs(w) * 3)} opacity={opacity} fill="none" strokeDasharray="7 8" className="synapse-flow"/>
+          <circle cx="34" cy={n.y} r="15" fill="#16352C" stroke={color} strokeWidth="1.5"/>
+          <circle cx="34" cy={n.y} r="4" fill={color}/>
+          <text x="60" y={n.y + 4} fill="#D5E7DE" fontSize="12">{n.id}</text>
+          <text x="300" y={n.y + 4} fill="#89A99A" fontSize="10" textAnchor="end">{w >= 0 ? "+" : ""}{w.toFixed(2)}</text>
+        </g>;
       })}
+      <circle cx="405" cy="294" r="78" fill="url(#neuronGlow)" opacity=".65"/>
+      <circle cx="405" cy="294" r="54" fill="#15382D" stroke="#6EE7B7" strokeWidth="2" filter="url(#softGlow)"/>
+      <circle cx="405" cy="294" r="38" fill="#0F2922" stroke="#2E8064" strokeWidth="1"/>
+      <path d="M405 267 L405 321 M378 294 L432 294 M386 275 L424 313 M424 275 L386 313" stroke="#A7F3D0" strokeWidth="2" strokeLinecap="round" opacity=".8"/>
+      <text x="405" y="370" fill="#D5E7DE" fontSize="13" textAnchor="middle" fontWeight="600">NEURON CORE</text>
+      <text x="405" y="388" fill="#89A99A" fontSize="10" textAnchor="middle">tanh · RMSProp</text>
+      <path d="M459 294 C 520 294, 530 294, 600 294" stroke="#6EE7B7" strokeWidth="3" fill="none" className="synapse-flow"/>
+      <circle cx="630" cy="294" r="47" fill="#17372D" stroke="#6EE7B7" strokeWidth="2"/>
+      <circle cx="630" cy="294" r="34" fill="#10251F" stroke="#327A60"/>
+      <path d="M615 294 L626 305 L647 281" fill="none" stroke="#A7F3D0" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+      <text x="630" y="365" fill="#D5E7DE" fontSize="12" textAnchor="middle">PREDICTION</text>
+      <text x="630" y="382" fill="#89A99A" fontSize="10" textAnchor="middle">UP / DOWN / FLAT</text>
+    </svg>
+    <div className="relative mt-1 flex flex-wrap items-center justify-between gap-2 text-[10px] text-[#89A99A]">
+      <span>Line weight = synapse strength</span><span>Green = positive · rose = negative contribution</span>
     </div>
-  );
+  </div>;
 }
-
-function SectionCard({ icon: Icon, title, subtitle, children, action }) {
-  return (
-    <section className="card p-5">
-      <div className="flex items-start justify-between gap-3 border-b border-line pb-3">
-        <div className="flex items-start gap-3">
-          <span className="grid place-items-center w-8 h-8 rounded-lg bg-pine-800 text-paper shrink-0">
-            <Icon size={16} strokeWidth={1.75} />
-          </span>
-          <div>
-            <h3 className="font-display text-[15px] font-semibold text-ink">{title}</h3>
-            {subtitle && <p className="text-[11px] text-muted mt-0.5">{subtitle}</p>}
-          </div>
-        </div>
-        {action}
+function WeightRow({ name, label, weight, contribution }) {
+  const w = Number(weight || 0), c = Number(contribution || 0);
+  const width = Math.min(100, Math.abs(w) / 1.5 * 100);
+  return <div className="grid grid-cols-[minmax(0,1fr)_72px_82px] items-center gap-3 border-b border-line py-3 last:border-0">
+    <div className="min-w-0">
+      <div className="text-[12px] font-medium text-ink">{label}</div>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-pine-50">
+        <div className={`h-full rounded-full ${w < 0 ? "bg-rose-400" : "bg-emerald-500"}`} style={{ width: `${width}%` }} />
       </div>
-      <div className="mt-4">{children}</div>
-    </section>
-  );
+    </div>
+    <div className="text-right font-mono text-[11px] text-ink">{w >= 0 ? "+" : ""}{fmt(w, 4)}</div>
+    <div className={`text-right font-mono text-[11px] ${c < 0 ? "text-rose-600" : "text-emerald-700"}`}>{c >= 0 ? "+" : ""}{fmt(c, 4)}</div>
+  </div>;
 }
 
 export default function NeuronPage() {
-  const [neuronState, setNeuronState] = useState(null);
-  const [memoryState, setMemoryState] = useState(null);
-  const [symbol, setSymbol] = useState("BTCUSDT");
-  const [realizedReturn, setRealizedReturn] = useState("");
-  const [lastPrediction, setLastPrediction] = useState(null);
-  const [lastEpisode, setLastEpisode] = useState(null);
-  const [lastClose, setLastClose] = useState(null);
-  const [lastRefit, setLastRefit] = useState(null);
-  const [lastValidate, setLastValidate] = useState(null);
-  const [lastStats, setLastStats] = useState(null);
-  const [loading, setLoading] = useState(null);
-  const [error, setError] = useState(null);
+  const [tab, setTab] = useState("live");
+  const [status, setStatus] = useState(null);
+  const [journal, setJournal] = useState([]);
+  const [audit, setAudit] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+  const [now, setNow] = useState(Date.now());
 
-  useEffect(() => {
-    setNeuronState(loadState(NEURON_KEY));
-    setMemoryState(loadState(MEMORY_KEY));
+  const refresh = useCallback(async (quiet = false) => {
+    if (quiet) setRefreshing(true); else setLoading(true);
+    setError("");
+    try {
+      const [s, j, a] = await Promise.all([
+        fetchNeuronLiveStatus(), fetchNeuronLiveJournal(40), fetchNeuronLiveAudit(),
+      ]);
+      setStatus(s); setJournal(j.rows || []); setAudit(a);
+    } catch (e) {
+      setError(e.message || "Gagal mengambil status Neuron.");
+      setStatus((old) => old || { configured: false, live: false });
+    } finally {
+      setLoading(false); setRefreshing(false);
+    }
   }, []);
 
-  function commitState(neuron, memory) {
-    if (neuron) { setNeuronState(neuron); saveState(NEURON_KEY, neuron); }
-    if (memory) { setMemoryState(memory); saveState(MEMORY_KEY, memory); }
-  }
+  useEffect(() => {
+    refresh();
+    const poll = window.setInterval(() => refresh(true), 30000);
+    const clock = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => { window.clearInterval(poll); window.clearInterval(clock); };
+  }, [refresh]);
 
-  async function runLoading(label, fn) {
-    setLoading(label); setError(null);
-    try { return await fn(); }
-    catch (e) { setError(e.message || String(e)); return null; }
-    finally { setLoading(null); }
-  }
+  const latest = status?.latestPrediction || journal[0] || null;
+  const model = status?.model || {};
+  const weights = model.state?.weights || {};
+  const contributions = latest?.contributions || {};
+  const countdown = 300 - (Math.floor(now / 1000) % 300);
+  const pct = Math.max(0, Math.min(100, (300 - countdown) / 3));
+  const activeTab = TABS.find((x) => x[0] === tab);
+  const featuresAvailable = status?.featureHealth || {};
+  const directionTone = tone(latest?.direction || latest?.verdict);
+  const accuracy = audit?.metrics?.directionalAccuracy;
 
-  async function onPredict() {
-    const r = await runLoading("predict", () =>
-      neuronPredict({ symbol, neuronState, memoryState })
-    );
-    if (r) {
-      commitState(r.neuronState, r.memoryState);
-      setLastPrediction(r.prediction);
-      setLastEpisode(r.episode);
-      setLastClose(null);
-    }
-  }
+  const pendingCount = status?.pendingCount ?? journal.filter((r) => r.status === "pending").length;
+  const labeledCount = audit?.metrics?.samples ?? status?.labeledCount ?? 0;
 
-  async function onClose() {
-    if (!lastEpisode) { setError("Belum ada episode pending. Jalankan Predict dulu."); return; }
-    const rr = parseFloat(realizedReturn);
-    if (Number.isNaN(rr)) { setError("Realized return harus angka (persen, mis. 4 atau -2.5)."); return; }
-    const r = await runLoading("close", () =>
-      neuronCloseEpisode({ episode: lastEpisode, realizedReturn: rr, neuronState, memoryState })
-    );
-    if (r) {
-      commitState(r.neuronState, r.memoryState);
-      setLastClose(r);
-      setLastEpisode(null);
-      setRealizedReturn("");
-    }
-  }
-
-  async function onRefit() {
-    if (!memoryState) { setError("Memory belum ada state. Jalankan Predict minimal sekali."); return; }
-    const r = await runLoading("refit", () => neuronRefit({ neuronState, memoryState }));
-    if (r) setLastRefit(r.proposal);
-  }
-
-  async function onValidate() {
-    if (!memoryState) { setError("Memory belum ada state."); return; }
-    const r = await runLoading("validate", () => neuronValidate({ neuronState, memoryState }));
-    if (r) setLastValidate(r.evaluation);
-  }
-
-  async function onStats() {
-    const r = await runLoading("stats", () => neuronStats({ memoryState }));
-    if (r) setLastStats({ stats: r.stats, trustedPatterns: r.trustedPatterns });
-  }
-
-  function onReset() {
-    localStorage.removeItem(NEURON_KEY);
-    localStorage.removeItem(MEMORY_KEY);
-    setNeuronState(null); setMemoryState(null);
-    setLastPrediction(null); setLastEpisode(null); setLastClose(null);
-    setLastRefit(null); setLastValidate(null); setLastStats(null);
-    setError(null);
-  }
-
-  const nUpdates = neuronState?.nUpdates ?? 0;
-  const pendingEps = memoryState?.episodes_pending ?? memoryState?.pending ?? 0;
-  const closedEps = memoryState?.episodes_closed ?? memoryState?.closed ?? 0;
-
-  return (
-    <div className="mx-auto max-w-7xl px-4 sm:px-6 py-8 md:py-10">
-      <Link to="/" className="inline-flex items-center gap-2 text-[12px] font-medium text-muted hover:text-pine-700 transition-colors focus-ring rounded">
-        <ArrowLeft size={14} strokeWidth={2} /> Back to screener
+  return <main className="mx-auto max-w-[1440px] px-3 pb-12 pt-5 sm:px-6 lg:px-8">
+    <div className="mb-5 flex items-center justify-between gap-3">
+      <Link to="/" className="inline-flex items-center gap-2 rounded-lg text-xs font-medium text-muted hover:text-pine-700 focus-ring">
+        <ArrowLeft size={15}/> Screener
       </Link>
-
-      <div className="mt-5 border-b border-line pb-6 max-w-3xl">
-        <p className="micro-label text-gold-600">Neuron Lab</p>
-        <h1 className="font-display text-4xl font-semibold tracking-tight mt-2 flex items-center gap-3">
-          <Brain size={32} strokeWidth={1.75} className="text-pine-800" />
-          Adaptive Online Neuron
-        </h1>
-        <p className="mt-3 text-[14px] leading-6 text-muted">
-          Neuron 9-dendrite (screen signal, demand quality, stability, FP stable/tail/live, rvol,
-          vwap dist) dengan aktivasi <code className="font-mono text-[12px] bg-pine-50 px-1.5 py-0.5 rounded">tanh</code>,
-          RMSProp online, surprise gate, dan pattern trust Wilson LB. <strong className="text-ink">Stateless di server</strong> —
-          bobot & memory episode disimpan di browser lu (localStorage), dikirim balik tiap request.
-        </p>
-      </div>
-
-      {/* ---------- state status bar ---------- */}
-      <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatTile label="Neuron updates" value={nUpdates} hint="RMSProp steps sejak init" />
-        <StatTile label="Episodes pending" value={pendingEps} hint="Menunggu outcome" />
-        <StatTile label="Episodes closed" value={closedEps} hint="Sudah belajar" />
-        <StatTile label="Model" value={lastPrediction?.model || "—"} hint={lastPrediction?.provisional ? "PROVISIONAL" : "ready"} />
-      </div>
-
-      {error && (
-        <div className="mt-5 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700 flex items-start gap-2">
-          <AlertTriangle size={15} strokeWidth={2} className="mt-0.5 shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      <div className="mt-6 grid lg:grid-cols-2 gap-5">
-        {/* ---------- PREDICT ---------- */}
-        <SectionCard
-          icon={Zap}
-          title="1 · Predict"
-          subtitle="Hitung dendrite dari screen-v2 + catat episode pending"
-          action={
-            <button
-              onClick={onPredict}
-              disabled={loading === "predict"}
-              className="focus-ring rounded-full px-4 py-1.5 text-[12px] font-medium bg-pine-800 text-paper hover:bg-pine-700 disabled:opacity-50 transition-colors"
-            >
-              {loading === "predict" ? "Menghitung…" : "Predict"}
-            </button>
-          }
-        >
-          <label className="block">
-            <span className="micro-label">Symbol</span>
-            <input
-              type="text"
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-              placeholder="BTCUSDT"
-              className="mt-1 w-full rounded-lg border border-line bg-paper px-3 py-2 text-[13px] font-mono focus:outline-none focus:border-pine-700"
-            />
-          </label>
-
-          {lastPrediction && (
-            <div className="mt-4 border-t border-line pt-4">
-              <div className="flex items-center gap-3 flex-wrap">
-                <VerdictBadge verdict={lastPrediction.verdict} />
-                <span className="font-mono text-[12px] text-muted">
-                  y = <strong className="text-ink">{lastPrediction.y.toFixed(3)}</strong>
-                </span>
-                <span className="font-mono text-[12px] text-muted">
-                  confidence = <strong className="text-ink">{lastPrediction.confidence.toFixed(3)}</strong>
-                </span>
-              </div>
-              <p className="micro-label mt-4">Dendrite contributions</p>
-              <DendriteContributions contributions={lastPrediction.contributions} />
-              {lastEpisode && (
-                <p className="mt-3 text-[11px] text-faint font-mono">
-                  episode #{lastEpisode.id} · pending close
-                </p>
-              )}
-            </div>
-          )}
-        </SectionCard>
-
-        {/* ---------- CLOSE EPISODE ---------- */}
-        <SectionCard
-          icon={CheckCircle2}
-          title="2 · Episode close + learn"
-          subtitle="Tutup episode pending → RMSProp update + surprise gate"
-          action={
-            <button
-              onClick={onClose}
-              disabled={loading === "close" || !lastEpisode}
-              className="focus-ring rounded-full px-4 py-1.5 text-[12px] font-medium bg-pine-800 text-paper hover:bg-pine-700 disabled:opacity-50 transition-colors"
-            >
-              {loading === "close" ? "Belajar…" : "Close & learn"}
-            </button>
-          }
-        >
-          {lastEpisode ? (
-            <div className="text-[12px] text-muted">
-              Pending: <span className="font-mono text-ink">#{lastEpisode.id}</span>{" "}
-              ({lastEpisode.symbol}) · verdict <VerdictBadge verdict={lastEpisode.verdict} />
-            </div>
-          ) : (
-            <p className="text-[12px] text-faint">Tidak ada episode pending. Jalankan Predict dulu.</p>
-          )}
-          <label className="block mt-3">
-            <span className="micro-label">Realized return (%)</span>
-            <input
-              type="number"
-              step="0.1"
-              value={realizedReturn}
-              onChange={(e) => setRealizedReturn(e.target.value)}
-              placeholder="mis. 4 atau -2.5"
-              className="mt-1 w-full rounded-lg border border-line bg-paper px-3 py-2 text-[13px] font-mono focus:outline-none focus:border-pine-700"
-            />
-          </label>
-          {lastClose?.learning && (
-            <div className="mt-3 border-t border-line pt-3 text-[11px] font-mono text-muted space-y-0.5">
-              <p>surprise_gate: <span className="text-ink">{String(lastClose.learning.surprise_gate ?? lastClose.learning.surprise)}</span></p>
-              <p>weight_delta: <span className="text-ink">{JSON.stringify(lastClose.learning.weight_delta ?? lastClose.learning.delta ?? {}).slice(0, 120)}</span></p>
-            </div>
-          )}
-          {lastClose?.stats && (
-            <p className="mt-2 text-[11px] text-faint">
-              closed: {lastClose.stats.closed} · winRate: {lastClose.stats.winRate ?? "—"}
-            </p>
-          )}
-        </SectionCard>
-
-        {/* ---------- REFIT ---------- */}
-        <SectionCard
-          icon={FlaskConical}
-          title="3 · Refit (guru offline)"
-          subtitle="Propose bobot baru dari episode CLOSED (≥30 disarankan). Hasil = USULAN."
-          action={
-            <button
-              onClick={onRefit}
-              disabled={loading === "refit" || !memoryState}
-              className="focus-ring rounded-full px-4 py-1.5 text-[12px] font-medium bg-pine-800 text-paper hover:bg-pine-700 disabled:opacity-50 transition-colors"
-            >
-              {loading === "refit" ? "Fitting…" : "Refit"}
-            </button>
-          }
-        >
-          {!lastRefit ? (
-            <p className="text-[12px] text-faint">Klik Refit untuk usulan bobot via logistic regression (temporal split 75/25).</p>
-          ) : (
-            <div className="text-[11px] font-mono text-muted space-y-1">
-              <p>verdict: <span className="text-ink">{lastRefit.verdict ?? lastRefit.action ?? "—"}</span></p>
-              <p>train_size: <span className="text-ink">{lastRefit.train_size ?? "—"}</span> · test_size: <span className="text-ink">{lastRefit.test_size ?? "—"}</span></p>
-              <p>train_auc: <span className="text-ink">{lastRefit.train_auc?.toFixed?.(3) ?? "—"}</span> · test_auc: <span className="text-ink">{lastRefit.test_auc?.toFixed?.(3) ?? "—"}</span></p>
-              {lastRefit.weights && (
-                <details className="mt-2">
-                  <summary className="cursor-pointer text-pine-700">proposed weights ({Object.keys(lastRefit.weights).length})</summary>
-                  <pre className="mt-1 p-2 bg-pine-50 rounded text-[10px] overflow-x-auto">{JSON.stringify(lastRefit.weights, null, 2)}</pre>
-                </details>
-              )}
-            </div>
-          )}
-        </SectionCard>
-
-        {/* ---------- VALIDATE ---------- */}
-        <SectionCard
-          icon={ShieldCheck}
-          title="4 · Validate (weight lab gate)"
-          subtitle="Brier / AUC / precision gate + relatif vs baseline. ≥50 CLOSED disarankan."
-          action={
-            <button
-              onClick={onValidate}
-              disabled={loading === "validate" || !memoryState}
-              className="focus-ring rounded-full px-4 py-1.5 text-[12px] font-medium bg-pine-800 text-paper hover:bg-pine-700 disabled:opacity-50 transition-colors"
-            >
-              {loading === "validate" ? "Evaluating…" : "Validate"}
-            </button>
-          }
-        >
-          {!lastValidate ? (
-            <p className="text-[12px] text-faint">Klik Validate untuk jalankan weight lab gate.</p>
-          ) : (
-            <div className="text-[11px] font-mono text-muted space-y-1">
-              <p>decision: <span className="text-ink">{lastValidate.decision ?? lastValidate.verdict ?? "—"}</span></p>
-              <p>brier: <span className="text-ink">{lastValidate.brier?.toFixed?.(4) ?? "—"}</span> · auc: <span className="text-ink">{lastValidate.auc?.toFixed?.(3) ?? "—"}</span> · precision: <span className="text-ink">{lastValidate.precision?.toFixed?.(3) ?? "—"}</span></p>
-              <p>relatif_vs_baseline: <span className="text-ink">{lastValidate.relative ?? lastValidate.delta ?? "—"}</span></p>
-              {lastValidate.reasons && (
-                <details className="mt-2">
-                  <summary className="cursor-pointer text-pine-700">reasons</summary>
-                  <pre className="mt-1 p-2 bg-pine-50 rounded text-[10px] overflow-x-auto">{JSON.stringify(lastValidate.reasons, null, 2)}</pre>
-                </details>
-              )}
-            </div>
-          )}
-        </SectionCard>
-      </div>
-
-      {/* ---------- STATS + RESET ---------- */}
-      <div className="mt-5 grid lg:grid-cols-2 gap-5">
-        <SectionCard
-          icon={Activity}
-          title="5 · Hippocampus stats"
-          subtitle="Episode counts, win rate, pattern trust (Wilson LB)"
-          action={
-            <button
-              onClick={onStats}
-              disabled={loading === "stats"}
-              className="focus-ring rounded-full px-4 py-1.5 text-[12px] font-medium bg-pine-800 text-paper hover:bg-pine-700 disabled:opacity-50 transition-colors"
-            >
-              {loading === "stats" ? "Loading…" : "Refresh"}
-            </button>
-          }
-        >
-          {!lastStats ? (
-            <p className="text-[12px] text-faint">Klik Refresh untuk load statistik memory.</p>
-          ) : (
-            <div className="grid grid-cols-2 gap-2 text-[11px] font-mono text-muted">
-              <p>episodes: <span className="text-ink">{lastStats.stats.episodes}</span></p>
-              <p>pending: <span className="text-ink">{lastStats.stats.pending}</span></p>
-              <p>closed: <span className="text-ink">{lastStats.stats.closed}</span></p>
-              <p>scored: <span className="text-ink">{lastStats.stats.scored}</span></p>
-              <p>winRate: <span className="text-ink">{lastStats.stats.winRate ?? "—"}</span></p>
-              <p>patterns: <span className="text-ink">{lastStats.stats.patterns}</span></p>
-              <p>trusted: <span className="text-ink">{lastStats.stats.trustedPatterns}</span></p>
-              <p>trusted list: <span className="text-ink">{Array.isArray(lastStats.trustedPatterns) ? lastStats.trustedPatterns.length : 0}</span></p>
-            </div>
-          )}
-        </SectionCard>
-
-        <SectionCard
-          icon={RotateCcw}
-          title="Reset state"
-          subtitle="Hapus neuronState + memoryState dari localStorage"
-          action={
-            <button
-              onClick={onReset}
-              className="focus-ring rounded-full px-4 py-1.5 text-[12px] font-medium border border-rose-200 text-rose-700 hover:bg-rose-50 transition-colors"
-            >
-              Reset
-            </button>
-          }
-        >
-          <p className="text-[12px] text-muted">
-            Bobot kembali ke init default (zero weights + bias 1.0). Semua episode hilang.
-            Berguna kalau lu mau mulai sesi belajar baru dari nol.
-          </p>
-          <p className="text-[11px] text-faint mt-2 font-mono">
-            storage keys: <code>{NEURON_KEY}</code>, <code>{MEMORY_KEY}</code>
-          </p>
-        </SectionCard>
-      </div>
-
-      {/* ---------- flow legend ---------- */}
-      <div className="mt-6 card p-4 text-[11px] text-muted leading-5">
-        <p className="micro-label">Alur belajar</p>
-        <pre className="mt-2 font-mono text-[10px] text-faint overflow-x-auto">{`predict (dendrite dari screen-v2 + fp)  ->  episode PENDING
-episode/close (+4% misal)                        ->  episode CLOSED, RMSProp update
-episode >= 30 CLOSED                             ->  refit = usulan bobot baru
-episode >= 50 CLOSED                             ->  weight_lab: Brier/AUC/precision
-LOLOS gerbang                                    ->  bobot baru boleh dipasang (PROVISIONAL)`}</pre>
-      </div>
+      <button onClick={() => refresh(true)} disabled={refreshing} className="btn-ghost focus-ring px-3 py-2 text-xs disabled:opacity-50">
+        <RefreshCw size={13} className={refreshing ? "animate-spin" : ""}/> Refresh
+      </button>
     </div>
-  );
+
+    <section className="relative overflow-hidden rounded-2xl border border-[#203B34] bg-[#0B1916] p-4 text-white sm:p-6">
+      <div className="absolute -right-24 -top-28 h-80 w-80 rounded-full bg-emerald-400/10 blur-3xl"/>
+      <div className="relative grid gap-6 xl:grid-cols-[1.15fr_.85fr]">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-2 rounded-full border border-emerald-300/25 bg-emerald-300/10 px-3 py-1 text-[10px] font-mono uppercase tracking-[.16em] text-emerald-200">
+              <span className="live-dot"/> Neuron live core
+            </span>
+            <span className="text-[10px] font-mono uppercase tracking-[.16em] text-[#86A99A]">BTCUSDT · 5 minute cycle</span>
+          </div>
+          <h1 className="mt-4 font-display text-3xl font-semibold tracking-tight sm:text-5xl">A network that<br className="hidden sm:block"/> learns from its own calls.</h1>
+          <p className="mt-3 max-w-xl text-sm leading-6 text-[#A8BDB3]">Setiap siklus membuat prediksi, menyimpan snapshot model, lalu menunggu harga aktual untuk mengaudit hasilnya. Bobot aktif tidak berubah diam-diam.</p>
+          <div className="mt-5 flex flex-wrap items-center gap-2">
+            <Signal label={status?.configured ? "Database connected" : "Database not connected"} state={status?.configured === true}/>
+            <Signal label={status?.cronReady ? "Scheduler configured" : "Scheduler not verified"} state={status?.cronReady === true}/>
+            <Signal label={status?.live ? "Market feed live" : "Market feed waiting"} state={status?.live === true}/>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3 self-end">
+          <div className="rounded-xl border border-white/10 bg-white/[.04] p-4">
+            <div className="text-[10px] uppercase tracking-[.16em] text-[#8CA99B]">Next cycle in</div>
+            <div className="mt-2 font-mono text-4xl font-semibold tabular-nums">{String(Math.floor(countdown / 60)).padStart(2,"0")}:{String(countdown % 60).padStart(2,"0")}</div>
+            <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-emerald-300 transition-all" style={{width:`${pct}%`}}/></div>
+            <div className="mt-2 text-[10px] text-[#8CA99B]">UI clock · not scheduler proof</div>
+          </div>
+          <div className="rounded-xl border border-white/10 bg-white/[.04] p-4">
+            <div className="text-[10px] uppercase tracking-[.16em] text-[#8CA99B]">Latest prediction</div>
+            <div className={`mt-2 text-3xl font-semibold ${directionTone === "up" ? "text-emerald-300" : directionTone === "down" ? "text-rose-300" : "text-slate-200"}`}>{latest?.direction || latest?.verdict || "—"}</div>
+            <div className="mt-1 font-mono text-sm text-[#B7C9C0]">{latest ? `${(Number(latest.probability_up || 0) * 100).toFixed(1)}% UP probability` : "Awaiting first record"}</div>
+            <div className="mt-3 text-[10px] text-[#8CA99B]">{latest ? fmtTime(latest.created_at || latest.generated_at) : "No stored prediction yet"}</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <Stat label="Predictions stored" value={status?.predictionCount ?? "—"} detail="Immutable journal records"/>
+      <Stat label="Awaiting outcome" value={pendingCount} detail="Next 5m close not labeled"/>
+      <Stat label="Audited samples" value={labeledCount} detail="Only matured predictions"/>
+      <Stat label="Directional accuracy" value={accuracy == null ? "—" : `${(accuracy * 100).toFixed(1)}%`} detail="Historical, not a guarantee" accent="text-emerald-700"/>
+    </div>
+
+    {error && <div role="alert" className="mt-4 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800"><CircleAlert size={15} className="mt-0.5 shrink-0"/><span>{error}. Pastikan env database dan API sudah dikonfigurasi.</span></div>}
+    {!status?.configured && !loading && <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900"><strong>Persistent storage belum tersambung.</strong> UI sudah siap, tetapi belum akan mengarang data live. Tambahkan SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, dan NEURON_CRON_SECRET pada environment Vercel, lalu jalankan migration yang disertakan.</div>}
+
+    <div className="mt-6 flex gap-1 overflow-x-auto border-b border-line" role="tablist" aria-label="Neuron sections">
+      {TABS.map(([id, label, Icon]) => <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)} className={`inline-flex shrink-0 items-center gap-2 border-b-2 px-3 py-3 text-xs font-medium transition-colors focus-ring ${tab === id ? "border-pine-700 text-pine-800" : "border-transparent text-muted hover:text-ink"}`}>
+        <Icon size={14}/>{label}
+      </button>)}
+    </div>
+
+    <div className="mt-5">
+      {tab === "live" && <div className="grid gap-5 xl:grid-cols-[1.2fr_.8fr]">
+        <section className="min-w-0">
+          <div className="mb-3 flex items-center justify-between gap-3"><div><div className="micro-label">Neural topology</div><h2 className="mt-1 font-display text-xl font-semibold">Signal pathways</h2></div><span className="text-[10px] text-muted">9 dendrites · 1 core · 1 output</span></div>
+          <NeuralMap weights={weights} contributions={contributions}/>
+        </section>
+        <section className="space-y-4">
+          <div className="card p-4 sm:p-5">
+            <div className="flex items-center justify-between"><div><div className="micro-label">Prediction snapshot</div><h2 className="mt-1 font-display text-lg font-semibold">BTC / USDT</h2></div><span className="chip">{latest?.model_version || model.state?.version || "model —"}</span></div>
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <div><div className="micro-label">Reference price</div><div className="mt-1 font-mono text-xl font-semibold">{fmtPrice(latest?.reference_price)}</div></div>
+              <div><div className="micro-label">Probability UP</div><div className="mt-1 font-mono text-xl font-semibold">{latest ? `${(Number(latest.probability_up || 0) * 100).toFixed(1)}%` : "—"}</div></div>
+              <div><div className="micro-label">Neuron output</div><div className="mt-1 font-mono text-lg">{fmt(latest?.prediction_value,4)}</div></div>
+              <div><div className="micro-label">Outcome target</div><div className="mt-1 text-xs">{fmtTime(latest?.target_at)}</div></div>
+            </div>
+            <div className="mt-4 rounded-lg bg-pine-50 p-3 text-[11px] leading-5 text-muted">Prediksi berstatus <strong>{latest?.status || "belum tersedia"}</strong>. Arah dihitung dari tanda output neuron; probabilitas UP dipetakan dari output tanh, bukan probabilitas terkalibrasi sampai audit cukup.</div>
+          </div>
+          <div className="card p-4 sm:p-5">
+            <div className="flex items-center gap-2"><Database size={15} className="text-pine-700"/><h3 className="font-display text-base font-semibold">Input health</h3></div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {FEATURE_META.filter(([key]) => key !== "bias").map(([key,label]) => <Signal key={key} label={label} state={featuresAvailable[key] === true}/>)}
+            </div>
+            <p className="mt-3 text-[11px] leading-5 text-muted">Input yang tidak tersedia harus dicatat sebagai missing/neutral, bukan dianggap sinyal valid. Lihat detail sumber pada jurnal.</p>
+          </div>
+        </section>
+      </div>}
+
+      {tab === "synapse" && <div className="grid gap-5 xl:grid-cols-[1fr_1fr]">
+        <section className="card p-4 sm:p-5">
+          <div className="flex items-center justify-between"><div><div className="micro-label">Champion model</div><h2 className="mt-1 font-display text-xl font-semibold">Synapse weights</h2></div><span className="chip chip-live">Active</span></div>
+          <p className="mt-2 text-xs text-muted">Bobot aktif saat ini. Perubahan bobot harus menghasilkan versi baru dan snapshot historis tidak boleh ditimpa.</p>
+          <div className="mt-4 grid grid-cols-[minmax(0,1fr)_72px_82px] gap-3 border-b border-line pb-2 micro-label"><span>Neuron input</span><span className="text-right">Weight</span><span className="text-right">Contribution</span></div>
+          {FEATURE_META.map(([key,label]) => <WeightRow key={key} name={key} label={label} weight={weights[key]} contribution={contributions[key]}/>)}
+          {!model.state && <p className="mt-3 text-xs text-muted">Belum ada bobot dari database. Nilai default tidak ditampilkan sebagai bobot aktif.</p>}
+        </section>
+        <section className="space-y-4">
+          <div className="card p-4 sm:p-5">
+            <div className="micro-label">Model integrity</div><h2 className="mt-1 font-display text-xl font-semibold">Weight self-check</h2>
+            <div className="mt-4 space-y-3 text-xs">
+              {[
+                ["Model version", model.version ? `v${model.version}` : "Not loaded"],
+                ["RMSProp updates", model.state?.nUpdates ?? "—"],
+                ["Snapshot checksum", model.checksum || "Not available"],
+                ["Last changed", fmtTime(model.updated_at)],
+                ["Promotion policy", "Champion / Candidate"],
+              ].map(([k,v]) => <div key={k} className="flex items-center justify-between gap-4 border-b border-line pb-2"><span className="text-muted">{k}</span><strong className="text-right font-mono font-medium text-ink">{v}</strong></div>)}
+            </div>
+          </div>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-900"><strong>Learning safety lock.</strong> Audit dapat mengukur bobot, tetapi tidak langsung mengubah Champion. Candidate baru harus diuji pada data kronologis yang belum dipakai training, dibandingkan dengan Champion, lalu dipromosikan hanya jika metrik validasi membaik.</div>
+        </section>
+      </div>}
+
+      {tab === "journal" && <section className="card overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line p-4"><div><div className="micro-label">Append-only record</div><h2 className="mt-1 font-display text-xl font-semibold">Prediction journal</h2></div><span className="text-[11px] text-muted">{journal.length} latest records</span></div>
+        {journal.length === 0 ? <div className="p-8 text-center"><History size={24} className="mx-auto text-faint"/><p className="mt-3 text-sm font-medium">Belum ada prediksi tersimpan</p><p className="mt-1 text-xs text-muted">Jurnal akan terisi setelah database dan cron worker aktif.</p></div> :
+        <div className="overflow-x-auto"><table className="data-table min-w-[850px]"><thead><tr><th>Generated</th><th>Direction</th><th>Reference</th><th>UP probability</th><th>Outcome</th><th>Actual return</th><th>Model</th></tr></thead><tbody>
+          {journal.map((row) => <tr key={row.id}><td className="whitespace-nowrap text-xs">{fmtTime(row.created_at)}</td><td><span className={`chip ${tone(row.direction) === "up" ? "text-emerald-700" : tone(row.direction) === "down" ? "text-rose-700" : ""}`}>{row.direction}</span></td><td className="font-mono text-xs">{fmtPrice(row.reference_price)}</td><td className="font-mono text-xs">{(Number(row.probability_up || 0)*100).toFixed(1)}%</td><td><span className={`text-xs ${row.status === "labeled" ? "text-emerald-700" : "text-amber-700"}`}>{row.status || "pending"}</span></td><td className="font-mono text-xs">{row.actual_return == null ? "—" : `${(Number(row.actual_return)*100).toFixed(3)}%`}</td><td className="font-mono text-xs">v{row.weights_version ?? "—"}</td></tr>)}
+        </tbody></table></div>}
+      </section>}
+
+      {tab === "audit" && <div className="grid gap-5 xl:grid-cols-[.9fr_1.1fr]">
+        <section className="grid grid-cols-2 gap-3 content-start">
+          <Stat label="Samples" value={audit?.metrics?.samples ?? "—"} detail="Labeled outcomes"/>
+          <Stat label="Directional accuracy" value={accuracy == null ? "—" : `${(accuracy*100).toFixed(2)}%`} detail="Actual 5m direction"/>
+          <Stat label="Brier score" value={fmt(audit?.metrics?.brierScore,4)} detail="Lower is better"/>
+          <Stat label="Mean absolute return error" value={audit?.metrics?.meanAbsReturnError == null ? "—" : `${(audit.metrics.meanAbsReturnError*100).toFixed(3)}%`} detail="Prediction target vs actual"/>
+          <div className="col-span-2 rounded-xl border border-line bg-card p-4"><div className="micro-label">Audit integrity</div><div className="mt-2 flex items-center gap-2 text-sm font-semibold">{audit?.metrics?.samples >= 100 ? <Check size={16} className="text-emerald-600"/> : <Clock3 size={16} className="text-amber-600"/>}{audit?.metrics?.samples >= 100 ? "Initial sample threshold reached" : "Collecting evidence"}</div><p className="mt-2 text-xs leading-5 text-muted">Akurasi belum layak dinilai dari sampel kecil. Minimum 100 outcome hanya ambang awal pemantauan, bukan sertifikasi model.</p></div>
+        </section>
+        <section className="card p-4 sm:p-5">
+          <div className="micro-label">Audit report</div><h2 className="mt-1 font-display text-xl font-semibold">Does the model earn its weights?</h2>
+          <p className="mt-2 text-xs leading-5 text-muted">Setiap outcome dibandingkan dengan snapshot prediksi dan bobot pada saat prediksi dibuat. Audit tidak membaca bobot terbaru untuk menilai prediksi lama.</p>
+          <div className="mt-5 space-y-3">
+            {[
+              ["Brier score", "Kualitas probabilitas UP/DOWN, semakin kecil semakin baik."],
+              ["Directional accuracy", "Persentase arah prediksi yang sama dengan return aktual."],
+              ["Weight drift", "Perubahan bobot dibanding versi Champion sebelumnya."],
+              ["Feature contribution", "Kontribusi dendrit saat prediksi dan hubungannya dengan error."],
+              ["Candidate gate", "Perbandingan model baru dengan Champion pada periode uji kronologis."],
+            ].map(([title,desc]) => <div key={title} className="flex gap-3"><span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-pine-50 text-pine-800"><Target size={14}/></span><div><div className="text-xs font-semibold">{title}</div><p className="mt-1 text-[11px] leading-5 text-muted">{desc}</p></div></div>)}
+          </div>
+          <div className="mt-5 rounded-lg bg-pine-50 p-3 text-[11px] leading-5 text-pine-900">{audit?.generatedAt ? `Last audit: ${fmtTime(audit.generatedAt)}` : "Audit belum tersedia. Tidak ada hasil yang dibuat-buat."}</div>
+        </section>
+      </div>}
+    </div>
+
+    <footer className="mt-8 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-4 text-[10px] text-muted">
+      <span className="inline-flex items-center gap-1.5"><BrainCircuit size={13}/> CYT Neural Audit · BTCUSDT · 5m</span>
+      <span>Model provisional · not a trading instruction</span>
+    </footer>
+  </main>;
 }
