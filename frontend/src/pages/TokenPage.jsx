@@ -149,7 +149,7 @@ function TokenIntelCard({ symbol }) {
                 {u.tokens != null && <> · {Number(u.tokens).toLocaleString("en-US", { notation: "compact", maximumFractionDigits: 2 })} token</>}
               </p>
               <p className="text-[10px] text-faint mt-1.5 leading-4">
-                Aturan overhang: unlock ≥1% mcap menurunkan LONG → WATCH; ≥3% → AVOID (supply-shock veto).
+                Informasi jadwal unlock saja. Data ini tidak masuk ke skor, filter, ranking, atau verdict model.
               </p>
             </div>
           ) : unlock.planDenied ? (
@@ -224,8 +224,7 @@ function TokenIntelCard({ symbol }) {
       )}
 
       <p className="text-[9px] text-faint mt-3 leading-4">
-        Sumber: CryptoRank (additive context). Data ini tidak mengubah rumus demand-quality — hanya gate overhang
-        unlock (≥1% WATCH, ≥3% AVOID) yang boleh menurunkan verdict. Blok yang tidak tersedia diberi alasan eksplisit, bukan digarisi data kosong.
+        Sumber: CryptoRank (informasi tambahan). Data unlock hanya ditampilkan sebagai konteks pasokan dan tidak memengaruhi skor, filter, ranking, atau verdict. Blok yang tidak tersedia diberi alasan eksplisit, bukan digarisi data kosong.
       </p>
     </div>
   );
@@ -400,22 +399,6 @@ export default function TokenPage() {
           })}
         </ul>
       </div>
-
-      {/* ---------- unlock overhang notice (CryptoRank gate) ---------- */}
-      {d.unlock && d.unlock.percentOfMcap != null && (
-        <div className="mt-4 rounded-xl border border-[#E3B7AC] bg-[#F6E4E0] px-4 py-3 flex items-start gap-3">
-          <Clock size={17} strokeWidth={1.75} className="text-[#8A3324] mt-0.5 shrink-0" />
-          <div className="text-[12px] leading-5 text-[#8A3324]">
-            <p className="font-semibold">
-              Supply overhang: ~{d.unlock.percentOfMcap.toFixed(1)}% market cap akan unlock {fmtUnlockDate(d.unlock.date)}.
-            </p>
-            <p className="mt-0.5">
-              {d.unlock.unlockValueUsd != null && `Nilai ${fmtUsdCompact(d.unlock.unlockValueUsd)}. `}
-              Gate overhang menurunkan verdict long (≥1% → WATCH, ≥3% → AVOID) — risiko supply shock, bukan sinyal demand.
-            </p>
-          </div>
-        </div>
-      )}
 
       {/* ---------- trigger chips ---------- */}
       {triggeredFilters.length > 0 && (
