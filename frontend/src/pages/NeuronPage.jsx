@@ -215,7 +215,7 @@ export default function NeuronPage() {
     </section>
 
     <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-      <Stat label="Predictions stored" value={status?.predictionCount ?? "—"} detail="Immutable journal records"/>
+      <Stat label="Recent records" value={status?.predictionCount ?? "—"} detail="Latest 1,000 records checked"/>
       <Stat label="Awaiting outcome" value={pendingCount} detail="Next 5m close not labeled"/>
       <Stat label="Audited samples" value={labeledCount} detail="Only matured predictions"/>
       <Stat label="Directional accuracy" value={accuracy == null ? "—" : `${(accuracy * 100).toFixed(1)}%`} detail="Historical, not a guarantee" accent="text-emerald-700"/>
@@ -272,7 +272,7 @@ export default function NeuronPage() {
               {[
                 ["Model version", model.version ? `v${model.version}` : "Not loaded"],
                 ["RMSProp updates", model.state?.nUpdates ?? "—"],
-                ["Snapshot checksum", model.checksum || "Not available"],
+                ["Snapshot checksum", model.checksumValid === true ? "Verified" : model.checksum ? "Mismatch" : "Not available"],
                 ["Last changed", fmtTime(model.updated_at)],
                 ["Promotion policy", "Champion / Candidate"],
               ].map(([k,v]) => <div key={k} className="flex items-center justify-between gap-4 border-b border-line pb-2"><span className="text-muted">{k}</span><strong className="text-right font-mono font-medium text-ink">{v}</strong></div>)}
@@ -285,7 +285,7 @@ export default function NeuronPage() {
       {tab === "journal" && <section className="card overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line p-4"><div><div className="micro-label">Append-only record</div><h2 className="mt-1 font-display text-xl font-semibold">Prediction journal</h2></div><span className="text-[11px] text-muted">{journal.length} latest records</span></div>
         {journal.length === 0 ? <div className="p-8 text-center"><History size={24} className="mx-auto text-faint"/><p className="mt-3 text-sm font-medium">Belum ada prediksi tersimpan</p><p className="mt-1 text-xs text-muted">Jurnal akan terisi setelah database dan cron worker aktif.</p></div> :
-        <div className="overflow-x-auto"><table className="data-table min-w-[850px]"><thead><tr><th>Generated</th><th>Direction</th><th>Reference</th><th>UP probability</th><th>Outcome</th><th>Actual return</th><th>Model</th></tr></thead><tbody>
+        <div className="overflow-x-auto"><table className="data-table min-w-[850px]"><thead><tr><th>Generated</th><th>Direction</th><th>Reference</th><th>UP score*</th><th>Outcome</th><th>Actual return</th><th>Model</th></tr></thead><tbody>
           {journal.map((row) => <tr key={row.id}><td className="whitespace-nowrap text-xs">{fmtTime(row.created_at)}</td><td><span className={`chip ${tone(row.direction) === "up" ? "text-emerald-700" : tone(row.direction) === "down" ? "text-rose-700" : ""}`}>{row.direction}</span></td><td className="font-mono text-xs">{fmtPrice(row.reference_price)}</td><td className="font-mono text-xs">{(Number(row.probability_up || 0)*100).toFixed(1)}%</td><td><span className={`text-xs ${row.status === "labeled" ? "text-emerald-700" : "text-amber-700"}`}>{row.status || "pending"}</span></td><td className="font-mono text-xs">{row.actual_return == null ? "—" : `${(Number(row.actual_return)*100).toFixed(3)}%`}</td><td className="font-mono text-xs">v{row.weights_version ?? "—"}</td></tr>)}
         </tbody></table></div>}
       </section>}
@@ -295,15 +295,21 @@ export default function NeuronPage() {
           <Stat label="Samples" value={audit?.metrics?.samples ?? "—"} detail="Labeled outcomes"/>
           <Stat label="Directional accuracy" value={accuracy == null ? "—" : `${(accuracy*100).toFixed(2)}%`} detail="Actual 5m direction"/>
           <Stat label="Brier score" value={fmt(audit?.metrics?.brierScore,4)} detail="Lower is better"/>
-          <Stat label="Mean absolute realized return" value={audit?.metrics?.meanAbsReturnError == null ? "—" : `${(audit.metrics.meanAbsReturnError*100).toFixed(3)}%`} detail="Prediction target vs actual"/>
+          <Stat label="Mean absolute realized return" value={audit?.metrics?.meanAbsoluteReturn == null ? "—" : `${(audit.metrics.meanAbsReturnError*100).toFixed(3)}%`} detail="Prediction target vs actual"/>
           <div className="col-span-2 rounded-xl border border-line bg-card p-4"><div className="micro-label">Audit integrity</div><div className="mt-2 flex items-center gap-2 text-sm font-semibold">{audit?.metrics?.samples >= 100 ? <Check size={16} className="text-emerald-600"/> : <Clock3 size={16} className="text-amber-600"/>}{audit?.metrics?.samples >= 100 ? "Initial sample threshold reached" : "Collecting evidence"}</div><p className="mt-2 text-xs leading-5 text-muted">Akurasi belum layak dinilai dari sampel kecil. Minimum 100 outcome hanya ambang awal pemantauan, bukan sertifikasi model.</p></div>
         </section>
         <section className="card p-4 sm:p-5">
           <div className="micro-label">Audit report</div><h2 className="mt-1 font-display text-xl font-semibold">Does the model earn its weights?</h2>
           <p className="mt-2 text-xs leading-5 text-muted">Setiap outcome dibandingkan dengan snapshot prediksi dan bobot pada saat prediksi dibuat. Audit tidak membaca bobot terbaru untuk menilai prediksi lama.</p>
+          {audit?.featureDiagnostics && <div className="mt-5 rounded-xl border border-line p-3">
+            <div className="micro-label">Feature / return correlation</div>
+            <div className="mt-2 space-y-2">
+              {Object.entries(audit.featureDiagnostics).map(([key, value]) => <div key={key} className="flex items-center justify-between gap-3 text-[11px]"><span className="text-muted">{key}</span><span className="font-mono text-ink">{value.returnCorrelation == null ? "—" : fmt(value.returnCorrelation,3)} <span className="text-muted">· n={value.samples}</span></span></div>)}
+            </div>
+          </div>}
           <div className="mt-5 space-y-3">
             {[
-              ["Brier score", "Kualitas probabilitas UP/DOWN, semakin kecil semakin baik."],
+              ["Brier score", "Kualitas UP score yang dipetakan ke 0–1; belum terkalibrasi, semakin kecil semakin baik."],
               ["Directional accuracy", "Persentase arah prediksi yang sama dengan return aktual."],
               ["Weight drift", "Perubahan bobot dibanding versi Champion sebelumnya."],
               ["Feature contribution", "Kontribusi dendrit saat prediksi dan hubungannya dengan error."],
