@@ -142,7 +142,7 @@ async def _write_audit(client: httpx.AsyncClient, model_version: int):
     else:
         accuracy = brier = mean_abs = None
     metrics = {"samples": n, "directionalAccuracy": accuracy,
-               "brierScore": brier, "meanAbsReturnError": mean_abs}
+               "brierScore": brier, "meanAbsoluteReturn": mean_abs}
     diagnostics: dict[str, Any] = {}
     feature_keys = ("screenSignal", "demandQuality", "stability", "fpStable",
                     "fpTail", "fpLiveDir", "rvol", "vwapDist")
