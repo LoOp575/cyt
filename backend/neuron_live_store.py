@@ -129,7 +129,7 @@ async def _label_matured(client: httpx.AsyncClient, candles: list[dict[str, Any]
     return labeled
 
 
-async def _write_audit(client: httpx.AsyncClient, model_version: int):
+async def _write_audit(client: httpx.AsyncClient, model_version: int, weights: dict[str, float]):
     rows = await _request(client, "GET", TABLE_PREDICTIONS, {
         "select": "direction,actual_direction,actual_return,probability_up,brier_score,features,contributions",
         "status": "eq.labeled", "order": "labeled_at.desc", "limit": "1000",
@@ -155,8 +155,15 @@ async def _write_audit(client: httpx.AsyncClient, model_version: int):
             cov = sum((x-xbar)*(y-ybar) for x,y in pairs) / len(pairs)
             vx = sum((x-xbar)**2 for x,_ in pairs) / len(pairs)
             vy = sum((y-ybar)**2 for _,y in pairs) / len(pairs)
-            diagnostics[key] = {"samples": len(pairs),
-                "returnCorrelation": cov / ((vx*vy)**0.5) if vx > 0 and vy > 0 else None}
+            corr = cov / ((vx*vy)**0.5) if vx > 0 and vy > 0 else None
+            abs_contrib = [abs(float((r.get("contributions") or {}).get(key) or 0)) for r in rows]
+            diagnostics[key] = {
+                "samples": len(pairs),
+                "weight": float(weights.get(key, 0.0)),
+                "returnCorrelation": corr,
+                "meanAbsContribution": sum(abs_contrib) / len(abs_contrib) if abs_contrib else 0.0,
+                "directionalAlignment": None if corr is None else ((float(weights.get(key, 0.0)) >= 0) == (corr >= 0)),
+            }
     await _request(client, "POST", TABLE_AUDITS, payload={
         "symbol": SYMBOL, "sample_count": n, "metrics": metrics,
         "feature_diagnostics": diagnostics, "model_version": model_version,
@@ -195,7 +202,7 @@ async def run_cycle(client: httpx.AsyncClient) -> dict[str, Any]:
     inserted = await _request(client, "POST", TABLE_PREDICTIONS, payload=record,
                               prefer="resolution=ignore-duplicates,return=representation")
     labeled = await _label_matured(client, candles)
-    audit = await _write_audit(client, int(model_row.get("version") or 1))
+    audit = await _write_audit(client, int(model_row.get("version") or 1), neuron.weights)
     return {
         "ok": True, "symbol": SYMBOL, "cycle": "5m",
         "predictionCreated": bool(inserted), "prediction": inserted[0] if inserted else None,
