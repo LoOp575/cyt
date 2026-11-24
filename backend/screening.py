@@ -427,3 +427,24 @@ def enrich_with_ticker(result: dict[str, Any], ticker: Optional[dict[str, Any]])
             "lowPrice": ticker.get("lowPrice"),
         }
     return result
+
+# Heuristic p^acc sigmoid weights (single source of truth, read by the
+# Calibration Lab at /api/calibrate/*). Change ONLY via a reviewed calibration.
+P_ACC_WEIGHTS: dict[str, float] = {
+    "intercept": -0.75,
+    "g_pos": 1.70,
+    "a_pos": 1.30,
+    "d_pos": 1.50,
+    "gap_pos": 1.20,
+    "c_cash": 1.20,  # multiplies (c_cash - 0.5)
+    "s_flow": 0.90,  # multiplies (s_flow - 0.7)
+}
+
+VERDICT_META = {
+    "LONG": {"label": "Long candidate", "tone": "long", "rank": 0},
+    "WATCH": {"label": "Watchlist", "tone": "watch", "rank": 1},
+    "NEUTRAL": {"label": "Neutral", "tone": "neutral", "rank": 2},
+    "NO_SIGNAL": {"label": "No signal — distortion", "tone": "flat", "rank": 3},
+    "AVOID": {"label": "Avoid", "tone": "avoid", "rank": 4},
+    "INSUFFICIENT_DATA": {"label": "Insufficient data", "tone": "flat", "rank": 5},
+}
