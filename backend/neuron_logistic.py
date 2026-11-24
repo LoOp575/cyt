@@ -39,7 +39,7 @@ TARGET_SCALE = 0.05      # sinkron neuron_core: +5% -> target +1.0
 # tetap isolasi & bisa jalan standalone — ubah kedua tempat bila berubah).
 DENDRITE_KEYS = [
     "screenSignal", "demandQuality", "stability", "fpStable", "fpTail",
-    "fpLiveDir", "rvol", "unlockGate", "vwapDist",
+    "fpLiveDir", "rvol", "vwapDist",
 ]
 
 def _clamp(v: float, lo: float, hi: float) -> float:
