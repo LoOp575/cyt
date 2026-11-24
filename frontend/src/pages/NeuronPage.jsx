@@ -66,7 +66,7 @@ function NeuralMap({ weights = {}, contributions = {} }) {
     { id: "rvol", x: 34, y: 420 }, { id: "vwapDist", x: 34, y: 483 },
     { id: "bias", x: 34, y: 546 },
   ];
-  return <div className="neural-map relative overflow-hidden rounded-2xl border border-[#203B34] bg-[#0B1916] p-3 sm:p-5">
+  return <div className="neural-map relative overflow-x-auto rounded-2xl border border-[#203B34] bg-[#0B1916] p-3 sm:p-5">
     <div className="absolute inset-0 neural-grid opacity-50" />
     <div className="relative flex items-center justify-between gap-2 text-[9px] uppercase tracking-[.18em] text-[#89A99A]">
       <span>Input dendrites</span><span>Synaptic pathways</span><span>Output</span>
