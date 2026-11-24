@@ -1,9 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  Activity, ArrowDownRight, ArrowLeft, ArrowUpRight, BrainCircuit, Check,
-  ChevronRight, CircleAlert, Clock3, Database, GitBranch, History,
-  RefreshCw, ShieldCheck, SlidersHorizontal, Sparkles, Target, Waves,
+  Activity, ArrowLeft, BrainCircuit, Check, CircleAlert, Clock3, Database,
+  GitBranch, History, RefreshCw, ShieldCheck, Target,
 } from "lucide-react";
 import {
   fetchNeuronLiveStatus, fetchNeuronLiveJournal, fetchNeuronLiveAudit,
@@ -28,7 +27,7 @@ const TABS = [
 ];
 
 function fmt(value, digits = 3) {
-  return Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : "—";
+  return value === null || value === undefined || value === "" || !Number.isFinite(Number(value)) ? "—" : Number(value).toFixed(digits);
 }
 function fmtPrice(value) {
   return Number.isFinite(Number(value))
@@ -208,7 +207,7 @@ export default function NeuronPage() {
           <div className="rounded-xl border border-white/10 bg-white/[.04] p-4">
             <div className="text-[10px] uppercase tracking-[.16em] text-[#8CA99B]">Latest prediction</div>
             <div className={`mt-2 text-3xl font-semibold ${directionTone === "up" ? "text-emerald-300" : directionTone === "down" ? "text-rose-300" : "text-slate-200"}`}>{latest?.direction || latest?.verdict || "—"}</div>
-            <div className="mt-1 font-mono text-sm text-[#B7C9C0]">{latest ? `${(Number(latest.probability_up || 0) * 100).toFixed(1)}% UP probability` : "Awaiting first record"}</div>
+            <div className="mt-1 font-mono text-sm text-[#B7C9C0]">{latest ? `${(Number(latest.probability_up || 0) * 100).toFixed(1)}% UP score` : "Awaiting first record"}</div>
             <div className="mt-3 text-[10px] text-[#8CA99B]">{latest ? fmtTime(latest.created_at || latest.generated_at) : "No stored prediction yet"}</div>
           </div>
         </div>
@@ -242,11 +241,11 @@ export default function NeuronPage() {
             <div className="flex items-center justify-between"><div><div className="micro-label">Prediction snapshot</div><h2 className="mt-1 font-display text-lg font-semibold">BTC / USDT</h2></div><span className="chip">{latest?.model_version || model.state?.version || "model —"}</span></div>
             <div className="mt-5 grid grid-cols-2 gap-3">
               <div><div className="micro-label">Reference price</div><div className="mt-1 font-mono text-xl font-semibold">{fmtPrice(latest?.reference_price)}</div></div>
-              <div><div className="micro-label">Probability UP</div><div className="mt-1 font-mono text-xl font-semibold">{latest ? `${(Number(latest.probability_up || 0) * 100).toFixed(1)}%` : "—"}</div></div>
+              <div><div className="micro-label">UP score (uncalibrated)</div><div className="mt-1 font-mono text-xl font-semibold">{latest ? `${(Number(latest.probability_up || 0) * 100).toFixed(1)}%` : "—"}</div></div>
               <div><div className="micro-label">Neuron output</div><div className="mt-1 font-mono text-lg">{fmt(latest?.prediction_value,4)}</div></div>
               <div><div className="micro-label">Outcome target</div><div className="mt-1 text-xs">{fmtTime(latest?.target_at)}</div></div>
             </div>
-            <div className="mt-4 rounded-lg bg-pine-50 p-3 text-[11px] leading-5 text-muted">Prediksi berstatus <strong>{latest?.status || "belum tersedia"}</strong>. Arah dihitung dari tanda output neuron; probabilitas UP dipetakan dari output tanh, bukan probabilitas terkalibrasi sampai audit cukup.</div>
+            <div className="mt-4 rounded-lg bg-pine-50 p-3 text-[11px] leading-5 text-muted">Prediksi berstatus <strong>{latest?.status || "belum tersedia"}</strong>. Arah dihitung dari tanda output neuron; UP score dipetakan dari output tanh, bukan probabilitas terkalibrasi sampai audit cukup.</div>
           </div>
           <div className="card p-4 sm:p-5">
             <div className="flex items-center gap-2"><Database size={15} className="text-pine-700"/><h3 className="font-display text-base font-semibold">Input health</h3></div>
@@ -296,7 +295,7 @@ export default function NeuronPage() {
           <Stat label="Samples" value={audit?.metrics?.samples ?? "—"} detail="Labeled outcomes"/>
           <Stat label="Directional accuracy" value={accuracy == null ? "—" : `${(accuracy*100).toFixed(2)}%`} detail="Actual 5m direction"/>
           <Stat label="Brier score" value={fmt(audit?.metrics?.brierScore,4)} detail="Lower is better"/>
-          <Stat label="Mean absolute return error" value={audit?.metrics?.meanAbsReturnError == null ? "—" : `${(audit.metrics.meanAbsReturnError*100).toFixed(3)}%`} detail="Prediction target vs actual"/>
+          <Stat label="Mean absolute realized return" value={audit?.metrics?.meanAbsReturnError == null ? "—" : `${(audit.metrics.meanAbsReturnError*100).toFixed(3)}%`} detail="Prediction target vs actual"/>
           <div className="col-span-2 rounded-xl border border-line bg-card p-4"><div className="micro-label">Audit integrity</div><div className="mt-2 flex items-center gap-2 text-sm font-semibold">{audit?.metrics?.samples >= 100 ? <Check size={16} className="text-emerald-600"/> : <Clock3 size={16} className="text-amber-600"/>}{audit?.metrics?.samples >= 100 ? "Initial sample threshold reached" : "Collecting evidence"}</div><p className="mt-2 text-xs leading-5 text-muted">Akurasi belum layak dinilai dari sampel kecil. Minimum 100 outcome hanya ambang awal pemantauan, bukan sertifikasi model.</p></div>
         </section>
         <section className="card p-4 sm:p-5">
