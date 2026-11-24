@@ -20,7 +20,7 @@ Yang SENGAJA TIDAK diubah (terevaluasi relevan):
  - Veto filters: low-quality growth, billing distortion, red-flag (urutan override sama).
  - Threshold LONG/WATCH (55/0.60, 38/0.50) — agar A/B vs v1 apple-to-apple.
  - Model instability (event frequency, magnitude, clustering) + exit triggers.
- - Unlock gate diterapkan di level route (shared dengan v1) — bukan di modul ini.
+ - Token unlock hanya metadata informasional; tidak memengaruhi model atau verdict.
 
 Murni komputasi, tanpa I/O — deterministik, bisa unit-test.
 Jalankan self-test:  python3 backend/screening_v2.py
