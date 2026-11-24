@@ -60,6 +60,12 @@ from backend.market_data import screen_cache
 from backend.screening import VERDICT_META, compute_features, enrich_with_ticker, apply_unlock_gate
 from backend.neuron_core import Neuron, build_dendrites
 from backend.neuron_memory import NeuronMemory
+from backend.neuron_live import (
+    collect_signals as v2_collect_signals,
+    decide_with_vetoes as v2_decide_with_vetoes,
+    load_active_weights as v2_load_active_weights,
+)
+from backend.neuron_dashboard import collect_state as v2_collect_state, render as v2_render
 
 load_dotenv()
 
@@ -1518,15 +1524,75 @@ async def neuron_predict(req: NeuronPredictRequest):
 
     pred = neuron.predict(dendrites)
     ep = memory.record_episode(req.symbol or "?", dendrites, pred["y"], pred["verdict"])
+
+    v2_out = None
+    if req.symbol:
+        sym = req.symbol.upper().strip()
+        try:
+            sigs = v2_collect_signals(sym)
+            w_v2, w_ver = v2_load_active_weights()
+            fd = v2_decide_with_vetoes(sym, sigs, w_v2)
+            v2_out = {
+                "signals": sigs,
+                "p_fused": fd.d.p_fused,
+                "sat": fd.d.sat,
+                "score": fd.d.score,
+                "direction": fd.d.direction,
+                "trade": fd.trade,
+                "size_frac": fd.size_frac,
+                "vetoes": fd.vetoes,
+                "used_sources": fd.d.used_sources,
+                "reasons": fd.reasons,
+                "weights_ver": w_ver,
+            }
+        except Exception:
+            v2_out = None
+
     return {
         "ok": True,
         "prediction": pred,
         "episode": ep,
         "trust": memory.pattern_trust(dendrites),
         "screen": screen,
+        "v2": v2_out,
         "neuronState": neuron.to_dict(),
         "memoryState": memory.to_dict(),
     }
+
+
+@app.get("/api/v2/predict/{symbol}")
+async def v2_predict_symbol(symbol: str):
+    """Meridian v2: 5 sinyal (fp, trend, micro, mem, log) + fusion + veto."""
+    sym = symbol.upper().strip()
+    if not sym.isalnum() or len(sym) > 20:
+        raise HTTPException(status_code=400, detail="Invalid symbol.")
+    sigs = v2_collect_signals(sym)
+    w_v2, w_ver = v2_load_active_weights()
+    fd = v2_decide_with_vetoes(sym, sigs, w_v2)
+    return {
+        "ok": True,
+        "symbol": sym,
+        "signals": sigs,
+        "p_fused": fd.d.p_fused,
+        "sat": fd.d.sat,
+        "score": fd.d.score,
+        "direction": fd.d.direction,
+        "trade": fd.trade,
+        "size_frac": fd.size_frac,
+        "vetoes": fd.vetoes,
+        "used_sources": fd.d.used_sources,
+        "reasons": fd.reasons,
+        "weights_ver": w_ver,
+    }
+
+
+@app.get("/api/v2/dashboard")
+async def v2_dashboard(fmt: str = "json"):
+    """Meridian v2: state saraf lengkap sebagai JSON atau frame teks (?fmt=text)."""
+    st = v2_collect_state()
+    if fmt == "text":
+        return PlainTextResponse(v2_render(st, 0))
+    return st
 
 
 @app.post("/api/neuron/episode/close")
