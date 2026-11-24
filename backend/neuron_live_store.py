@@ -26,13 +26,20 @@ def is_configured() -> bool:
 
 
 def _headers() -> dict[str, str]:
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-    return {
+    """Build PostgREST headers for either modern Supabase keys or legacy JWT keys.
+
+    Modern sb_secret_* keys are API keys, not JWTs: send them only via apikey.
+    Legacy service_role keys are JWTs and may also be sent as Bearer tokens.
+    """
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    headers = {
         "apikey": key,
-        "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
+    if not key.startswith("sb_secret_"):
+        headers["Authorization"] = f"Bearer {key}"
+    return headers
 
 
 def _base() -> str:
