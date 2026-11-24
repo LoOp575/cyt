@@ -1,8 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "npm install --prefix frontend",
-  "buildCommand": "npm run build",
-  "outputDirectory": "frontend/build",
   "framework": null,
   "regions": [
     "sin1"
@@ -16,13 +13,6 @@
     {
       "src": "/api/(.*)",
       "dest": "/api/index"
-    },
-    {
-      "handle": "filesystem"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/index.html"
     }
   ]
 }
