@@ -57,7 +57,7 @@ from backend import (
     weight_lab,
 )
 from backend.market_data import screen_cache
-from backend.screening import VERDICT_META, compute_features, enrich_with_ticker, apply_unlock_gate
+from backend.screening import VERDICT_META, compute_features, enrich_with_ticker
 from backend.neuron_core import Neuron, build_dendrites
 from backend.neuron_memory import NeuronMemory
 
@@ -201,12 +201,11 @@ async def _screen_symbol(
     return result
 
 
-async def _attach_cryptorank(client: httpx.AsyncClient, rows: list[dict[str, Any]]) -> int:
-    """Attach `cryptorank` + `unlock` context blocks in-place, then apply the unlock gate.
+async def _attach_cryptorank(client: httpx.AsyncClient, rows: list[dict[str, Any]]) -> None:
+    """Attach CryptoRank profile and unlock context as informational metadata only.
 
-    Never raises. Unlock feed is Pro-gated and self-configuring via /v3/status;
-    when unavailable rows get `unlock: None` and the gate is a no-op.
-    Returns the number of verdicts downgraded by the unlock gate.
+    Unlock availability, size, and timing never modify model features, scores,
+    filters, ranking, or verdicts. Missing unlock data also has no scoring effect.
     """
     cr_map = await cryptorank.symbol_map(client)
 
@@ -215,18 +214,14 @@ async def _attach_cryptorank(client: httpx.AsyncClient, rows: list[dict[str, Any
     if unlock_allowed is not False:
         try:
             unlock_map = await cryptorank.unlocks_by_symbol(client)
-        except Exception:  # noqa: BLE001 - enrichment must never break screening
+        except Exception:  # noqa: BLE001 - optional information must never break screening
             unlock_map = {}
 
-    changed = 0
     for r in rows:
         r["cryptorank"] = cryptorank.block_for(r.get("symbol"), cr_map)
         r["unlock"] = cryptorank.unlock_block(r.get("symbol"), unlock_map)
         r.setdefault("sources", {})["cryptorank"] = bool(cr_map)
         r["sources"]["unlock"] = unlock_allowed is not False
-        if apply_unlock_gate(r, r.get("unlock"), cryptorank.UNLOCK_WATCH_PCT, cryptorank.UNLOCK_AVOID_PCT):
-            changed += 1
-    return changed
 
 
 # How many volume-qualified pairs to probe for history when we need `limit`
@@ -452,7 +447,7 @@ async def screen(
     usable_rows = [r for r in scored_rows if r.get("ok")]
     out_rows = (usable_rows or scored_rows)[:limit]
 
-    gate_changed = await _attach_cryptorank(client, out_rows)
+    await _attach_cryptorank(client, out_rows)
     ok_rows = [r for r in out_rows if r.get("ok")]
     _rank_rows(out_rows)
 
@@ -536,7 +531,7 @@ async def screen(
             "configured": cryptorank.cr_configured(),
             "creditsUsed": cryptorank.stats()["creditsUsed"],
             "attached": sum(1 for r in out_rows if r.get("cryptorank")),
-            "unlockGateApplied": gate_changed,
+            "unlockInfoAttached": sum(1 for r in out_rows if r.get("unlock")),
         },
     }
     screen_cache.set(cache_key, result)
