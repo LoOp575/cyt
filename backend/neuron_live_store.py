@@ -228,13 +228,24 @@ async def status(client: httpx.AsyncClient) -> dict[str, Any]:
             datetime.fromisoformat(latest["created_at"].replace("Z", "+00:00"))).total_seconds())
     checksum_valid = bool(model.get("state") and model.get("checksum") and
                           _checksum(model["state"]) == model["checksum"])
+    from backend.neuron_core import INIT_WEIGHTS, W_CAP
+    raw_weights = (model.get("state") or {}).get("weights") or {}
+    missing_weights = [key for key in INIT_WEIGHTS if key not in raw_weights]
+    out_of_range = [key for key, value in raw_weights.items()
+                    if key in INIT_WEIGHTS and not (-W_CAP <= float(value) <= W_CAP)]
+    weight_integrity = {
+        "checksumValid": checksum_valid,
+        "missingKeys": missing_weights,
+        "outOfRange": out_of_range,
+        "ok": checksum_valid and not missing_weights and not out_of_range,
+    }
     return {
         "ok": True, "configured": True, "live": bool(age_seconds is not None and age_seconds < 600),
         "latestAgeSeconds": age_seconds,
         "cronReady": bool(os.getenv("NEURON_CRON_SECRET") or os.getenv("CRON_SECRET")),
         "predictionCount": len(counts), "pendingCount": pending, "labeledCount": labeled,
         "latestPrediction": latest,
-        "model": {**model, "checksumValid": checksum_valid},
+        "model": {**model, "checksumValid": checksum_valid, "weightIntegrity": weight_integrity},
         "featureHealth": {k: bool(latest and k in (latest.get("features") or {}))
                           for k in ("screenSignal", "demandQuality", "stability", "fpStable",
                                     "fpTail", "fpLiveDir", "rvol", "vwapDist")},
