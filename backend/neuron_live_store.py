@@ -213,13 +213,24 @@ async def status(client: httpx.AsyncClient) -> dict[str, Any]:
                                  {"select": "*", "order": "created_at.desc", "limit": "1"})
     pending = sum(1 for r in counts if r.get("status") == "pending")
     labeled = sum(1 for r in counts if r.get("status") == "labeled")
+    latest = latest_rows[0] if latest_rows else None
+    model = model_rows[0] if model_rows else {}
+    age_seconds = None
+    if latest and latest.get("created_at"):
+        age_seconds = max(0.0, (datetime.now(timezone.utc) -
+            datetime.fromisoformat(latest["created_at"].replace("Z", "+00:00"))).total_seconds())
+    checksum_valid = bool(model.get("state") and model.get("checksum") and
+                          _checksum(model["state"]) == model["checksum"])
     return {
-        "ok": True, "configured": True, "live": bool(latest_rows),
+        "ok": True, "configured": True, "live": bool(age_seconds is not None and age_seconds < 600),
+        "latestAgeSeconds": age_seconds,
         "cronReady": bool(os.getenv("NEURON_CRON_SECRET") or os.getenv("CRON_SECRET")),
         "predictionCount": len(counts), "pendingCount": pending, "labeledCount": labeled,
-        "latestPrediction": latest_rows[0] if latest_rows else None,
-        "model": model_rows[0] if model_rows else {},
-        "featureHealth": {k: True for k in ("screenSignal", "demandQuality", "stability", "rvol", "vwapDist")},
+        "latestPrediction": latest,
+        "model": {**model, "checksumValid": checksum_valid},
+        "featureHealth": {k: bool(latest and k in (latest.get("features") or {}))
+                          for k in ("screenSignal", "demandQuality", "stability", "fpStable",
+                                    "fpTail", "fpLiveDir", "rvol", "vwapDist")},
     }
 
 
