@@ -287,3 +287,15 @@ export function neuronValidate({ neuronState, memoryState, candidateWeights, bas
 export function neuronStats({ memoryState } = {}) {
   return postJSON("/api/neuron/stats", { memoryState });
 }
+
+
+/* ---------- Neuron Live Core — persistent journal & self-audit ---------- */
+export function fetchNeuronLiveStatus() {
+  return fetchJSON("/api/neuron/live/status");
+}
+export function fetchNeuronLiveJournal(limit = 40) {
+  return fetchJSON(`/api/neuron/live/journal?limit=${encodeURIComponent(limit)}`);
+}
+export function fetchNeuronLiveAudit() {
+  return fetchJSON("/api/neuron/live/audit");
+}
