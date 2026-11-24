@@ -19,7 +19,6 @@ Dendrite map (bobot PROVISIONAL — production trust hanya setelah lab/refit):
   x5  fpTail        = 1 - 2*pTailCrash
   x6  fpLiveDir     = arah intraday [-1,+1] (dari fp_live)
   x7  rvol          = sat(rvol - 1)
-  x8  unlockGate    = [-1,+1] (unlock besar mendekat -> negatif)
   x9  vwapDist      = sat(close_vs_vwap20)
   x10 bias          = 1.0
 
@@ -49,7 +48,7 @@ LONG_T, WATCH_T, AVOID_T = 0.30, 0.05, -0.05
 INIT_WEIGHTS: dict[str, float] = {
     "screenSignal": 0.30, "demandQuality": 0.20, "stability": 0.20,
     "fpStable": 0.15, "fpTail": 0.15, "fpLiveDir": 0.10,
-    "rvol": 0.10, "unlockGate": 0.10, "vwapDist": 0.15, "bias": 0.0,
+    "rvol": 0.10, "vwapDist": 0.15, "bias": 0.0,
 }
 DENDRITE_KEYS = [k for k in INIT_WEIGHTS if k != "bias"]
 
@@ -174,7 +173,6 @@ def build_dendrites(
     screen: Optional[dict[str, Any]] = None,
     fp: Optional[dict[str, Any]] = None,
     fp_live_dir: Optional[float] = None,
-    unlock: Optional[float] = None,
 ) -> dict[str, float]:
     """Aman terhadap input None/parcial — dendrite tak tersedia = 0.0 (netral)."""
     d = {k: 0.0 for k in DENDRITE_KEYS}
@@ -192,8 +190,6 @@ def build_dendrites(
         d["fpTail"] = clamp(1.0 - 2.0 * float(m.get("pTailCrash", 0.5) or 0.5), -1.0, 1.0)
     if fp_live_dir is not None:
         d["fpLiveDir"] = clamp(float(fp_live_dir), -1.0, 1.0)
-    if unlock is not None:
-        d["unlockGate"] = clamp(float(unlock), -1.0, 1.0)
     return d
 
 # ---------------------------------------------------------------------------
