@@ -295,7 +295,7 @@ export default function NeuronPage() {
           <Stat label="Samples" value={audit?.metrics?.samples ?? "—"} detail="Labeled outcomes"/>
           <Stat label="Directional accuracy" value={accuracy == null ? "—" : `${(accuracy*100).toFixed(2)}%`} detail="Actual 5m direction"/>
           <Stat label="Brier score" value={fmt(audit?.metrics?.brierScore,4)} detail="Lower is better"/>
-          <Stat label="Mean absolute realized return" value={audit?.metrics?.meanAbsoluteReturn == null ? "—" : `${(audit.metrics.meanAbsReturnError*100).toFixed(3)}%`} detail="Prediction target vs actual"/>
+          <Stat label="Mean absolute realized return" value={audit?.metrics?.meanAbsoluteReturn == null ? "—" : `${(audit.metrics.meanAbsReturnError*100).toFixed(3)}%`} detail="Mean absolute realized 5m return"/>
           <div className="col-span-2 rounded-xl border border-line bg-card p-4"><div className="micro-label">Audit integrity</div><div className="mt-2 flex items-center gap-2 text-sm font-semibold">{audit?.metrics?.samples >= 100 ? <Check size={16} className="text-emerald-600"/> : <Clock3 size={16} className="text-amber-600"/>}{audit?.metrics?.samples >= 100 ? "Initial sample threshold reached" : "Collecting evidence"}</div><p className="mt-2 text-xs leading-5 text-muted">Akurasi belum layak dinilai dari sampel kecil. Minimum 100 outcome hanya ambang awal pemantauan, bukan sertifikasi model.</p></div>
         </section>
         <section className="card p-4 sm:p-5">
@@ -304,7 +304,7 @@ export default function NeuronPage() {
           {audit?.featureDiagnostics && <div className="mt-5 rounded-xl border border-line p-3">
             <div className="micro-label">Feature / return correlation</div>
             <div className="mt-2 space-y-2">
-              {Object.entries(audit.featureDiagnostics).map(([key, value]) => <div key={key} className="flex items-center justify-between gap-3 text-[11px]"><span className="text-muted">{key}</span><span className="font-mono text-ink">{value.returnCorrelation == null ? "—" : fmt(value.returnCorrelation,3)} <span className="text-muted">· n={value.samples}</span></span></div>)}
+              {Object.entries(audit.featureDiagnostics).map(([key, value]) => <div key={key} className="grid grid-cols-[minmax(0,1fr)_58px_58px_52px] items-center gap-2 text-[10px]"><span className="truncate text-muted">{key}</span><span className="text-right font-mono text-ink">w {fmt(value.weight,2)}</span><span className="text-right font-mono text-ink">r {fmt(value.returnCorrelation,2)}</span><span className={"text-right " + (value.directionalAlignment == null ? "text-muted" : value.directionalAlignment ? "text-emerald-700" : "text-amber-700")}>{value.directionalAlignment == null ? "—" : value.directionalAlignment ? "aligned" : "review"}</span></div>)}
             </div>
           </div>}
           <div className="mt-5 space-y-3">
