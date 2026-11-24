@@ -205,7 +205,7 @@ export default function NeuronPage() {
           Adaptive Online Neuron
         </h1>
         <p className="mt-3 text-[14px] leading-6 text-muted">
-          Neuron 10-dendrite (screen signal, demand quality, stability, FP stable/tail/live, rvol, unlock gate,
+          Neuron 9-dendrite (screen signal, demand quality, stability, FP stable/tail/live, rvol,
           vwap dist) dengan aktivasi <code className="font-mono text-[12px] bg-pine-50 px-1.5 py-0.5 rounded">tanh</code>,
           RMSProp online, surprise gate, dan pattern trust Wilson LB. <strong className="text-ink">Stateless di server</strong> —
           bobot & memory episode disimpan di browser lu (localStorage), dikirim balik tiap request.
@@ -446,7 +446,7 @@ export default function NeuronPage() {
       {/* ---------- flow legend ---------- */}
       <div className="mt-6 card p-4 text-[11px] text-muted leading-5">
         <p className="micro-label">Alur belajar</p>
-        <pre className="mt-2 font-mono text-[10px] text-faint overflow-x-auto">{`predict (dendrite dari screen-v2 + fp + unlock)  ->  episode PENDING
+        <pre className="mt-2 font-mono text-[10px] text-faint overflow-x-auto">{`predict (dendrite dari screen-v2 + fp)  ->  episode PENDING
 episode/close (+4% misal)                        ->  episode CLOSED, RMSProp update
 episode >= 30 CLOSED                             ->  refit = usulan bobot baru
 episode >= 50 CLOSED                             ->  weight_lab: Brier/AUC/precision
