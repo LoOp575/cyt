@@ -64,10 +64,6 @@ CR_CACHE_SECONDS = float(os.getenv("CR_CACHE_SECONDS", "300"))
 CR_LIST_SORT = "volume24h"
 CR_LIST_LIMIT = 100  # top of CR market table by volume; matches our universe selection
 
-# Unlock-gate thresholds (percent of coin market cap within 30 days).
-UNLOCK_WATCH_PCT = float(os.getenv("CR_UNLOCK_WATCH_PCT", "1.0"))
-UNLOCK_AVOID_PCT = float(os.getenv("CR_UNLOCK_AVOID_PCT", "3.0"))
-
 
 def _to_float(v: Any, fallback: Optional[float] = None) -> Optional[float]:
     try:
