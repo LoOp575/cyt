@@ -162,7 +162,7 @@ async def _write_audit(client: httpx.AsyncClient, model_version: int, weights: d
                 "weight": float(weights.get(key, 0.0)),
                 "returnCorrelation": corr,
                 "meanAbsContribution": sum(abs_contrib) / len(abs_contrib) if abs_contrib else 0.0,
-                "directionalAlignment": None if corr is None else ((float(weights.get(key, 0.0)) >= 0) == (corr >= 0)),
+                "directionalAlignment": None if corr is None or abs(corr) < 1e-9 or abs(float(weights.get(key, 0.0))) < 1e-9 else (float(weights.get(key, 0.0)) * corr > 0),
             }
     await _request(client, "POST", TABLE_AUDITS, payload={
         "symbol": SYMBOL, "sample_count": n, "metrics": metrics,
