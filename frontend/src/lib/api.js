@@ -257,3 +257,33 @@ export function runFpV2Backtest({
     source,
   });
 }
+
+/* ---------- Neuron — online adaptive learning (stateless, state in client) ----------
+ * Server Vercel ephemeral — neuronState & memoryState disimpan di localStorage
+ * client, dikirim balik di body tiap request. Flow:
+ *   predict (dendrite dari screen-v2 + fp + unlock) -> episode PENDING
+ *   episode/close (+4% misal)                      -> episode CLOSED, RMSProp update
+ *   episode >= 30 CLOSED                           -> refit = usulan bobot baru
+ *   episode >= 50 CLOSED                           -> validate (Brier/AUC/precision gate)
+ * Bobot ACCEPT tetap PROVISIONAL — wajib monitoring live.
+ */
+
+export function neuronPredict({ symbol, neuronState, memoryState } = {}) {
+  return postJSON("/api/neuron/predict", { symbol, neuronState, memoryState });
+}
+
+export function neuronCloseEpisode({ episode, realizedReturn, neuronState, memoryState }) {
+  return postJSON("/api/neuron/episode/close", { episode, realizedReturn, neuronState, memoryState });
+}
+
+export function neuronRefit({ neuronState, memoryState } = {}) {
+  return postJSON("/api/neuron/refit", { neuronState, memoryState });
+}
+
+export function neuronValidate({ neuronState, memoryState, candidateWeights, baselineWeights } = {}) {
+  return postJSON("/api/neuron/validate", { neuronState, memoryState, candidateWeights, baselineWeights });
+}
+
+export function neuronStats({ memoryState } = {}) {
+  return postJSON("/api/neuron/stats", { memoryState });
+}

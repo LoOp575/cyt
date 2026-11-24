@@ -28,6 +28,7 @@ const NAV = [
   { to: "/fokker-planck", label: "Fokker–Planck" },
   { to: "/fokker-planck-v2", label: "FP v2 · Banding" },
   { to: "/fp-live", label: "FP Live" },
+  { to: "/neuron", label: "Neuron" },
   { to: "/calibration", label: "Kalibrasi" },
   { to: "/methodology", label: "Methodology" },
 ];
