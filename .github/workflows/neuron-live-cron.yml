@@ -1,0 +1,32 @@
+name: CYT Neuron 5m cycle
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: cyt-neuron-live-cycle
+  cancel-in-progress: false
+
+jobs:
+  run-neuron:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Validate scheduler configuration
+        env:
+          CYT_API_BASE_URL: ${{ vars.CYT_API_BASE_URL }}
+          NEURON_CRON_SECRET: ${{ secrets.NEURON_CRON_SECRET }}
+        run: |
+          test -n "$CYT_API_BASE_URL" || (echo "Missing repository variable CYT_API_BASE_URL" && exit 1)
+          test -n "$NEURON_CRON_SECRET" || (echo "Missing repository secret NEURON_CRON_SECRET" && exit 1)
+      - name: Run BTCUSDT Neuron cycle
+        env:
+          CYT_API_BASE_URL: ${{ vars.CYT_API_BASE_URL }}
+          NEURON_CRON_SECRET: ${{ secrets.NEURON_CRON_SECRET }}
+        run: |
+          curl --fail --silent --show-error \
+            --retry 2 --retry-delay 3 --max-time 90 \
+            -H "Authorization: Bearer $NEURON_CRON_SECRET" \
+            "$CYT_API_BASE_URL/api/neuron/cron"

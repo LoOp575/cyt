@@ -32,10 +32,11 @@ from uuid import uuid4
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+import hmac
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -1591,6 +1592,54 @@ async def tokenomics(symbol: str):
     bundle = await cryptorank_vesting.fetch_tokenomics_bundle(client, sym)
     return bundle
 
+
+
+
+# ---------------------------------------------------------------------------
+# Neuron Live Core — persistent BTCUSDT 5m prediction journal + audit
+# ---------------------------------------------------------------------------
+from backend import neuron_live_store
+
+@app.get("/api/neuron/live/status")
+async def neuron_live_status():
+    if not neuron_live_store.is_configured():
+        return {"ok": True, "configured": False, "live": False, "cronReady": bool(os.getenv("NEURON_CRON_SECRET") or os.getenv("CRON_SECRET"))}
+    try:
+        return await neuron_live_store.status(_http_client())
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Neuron storage unavailable: {exc}")
+
+@app.get("/api/neuron/live/journal")
+async def neuron_live_journal(limit: int = Query(40, ge=1, le=100)):
+    if not neuron_live_store.is_configured():
+        return {"ok": True, "configured": False, "rows": []}
+    try:
+        return {"ok": True, "configured": True, "rows": await neuron_live_store.journal(_http_client(), limit)}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Neuron journal unavailable: {exc}")
+
+@app.get("/api/neuron/live/audit")
+async def neuron_live_audit():
+    if not neuron_live_store.is_configured():
+        return {"ok": True, "configured": False, "metrics": {"samples": 0}}
+    try:
+        return await neuron_live_store.audit(_http_client())
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Neuron audit unavailable: {exc}")
+
+@app.get("/api/neuron/cron")
+async def neuron_live_cron(request: Request):
+    """Vercel Cron entry. Requires NEURON_CRON_SECRET (or CRON_SECRET)."""
+    secret = os.getenv("NEURON_CRON_SECRET") or os.getenv("CRON_SECRET")
+    supplied = request.headers.get("authorization", "")
+    if not secret or not hmac.compare_digest(supplied, f"Bearer {secret}"):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request.")
+    if not neuron_live_store.is_configured():
+        raise HTTPException(status_code=503, detail="Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.")
+    try:
+        return await neuron_live_store.run_cycle(_http_client())
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Neuron cycle failed: {exc}")
 
 # ---------------------------------------------------------------------------
 # Static frontend (local preview / non-Vercel serving). Registered last so
