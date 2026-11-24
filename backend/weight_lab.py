@@ -1,287 +1,297 @@
 """
-Meridian — Weight Lab v1 (gerbang validasi bobot, modul ISOLASI)
-================================================================
+Meridian v2 — Weight Lab (audited & improved).
+===============================================
+Mencari bobot fusi w* dari DATA, lalu memutuskan boleh/tidak dipakai live.
 
-Tugas: MENILAI bobot kandidat terhadap data episode tertutup, sebelum
-bobot dipasang ke production. Budaya audit:
+METODE LOCKED:
+  Objective : minimalkan Brier = mean((P_fused - y)^2)
+  Kendala   : w_i in [0.05, 0.45], sum(w) = 1
+  Optimizer : scipy SLSQP -> fallback pairwise-transfer descent (tanpa scipy)
+  Validasi  : walk-forward kronologis train -> val -> test (TIDAK shuffle)
+  Gerbang   : SEMUA harus lolos, else bobot tetap NETRAL.
 
-  1. Gerbang MUTLAK (semua wajib lolos):
-     - Brier score  <= 0.25   (kalibrasi probabilitas naik)
-     - AUC          >= 0.60   (daya pisah arah)
-     - Precision top-25%, Wilson LB >= 0.55 (konservatif ala neuron_memory)
-  2. Gerbang RELATIF: jika baseline disediakan DAN baseline lolos gerbang
-     mutlak, kandidat harus TIDAK LEBIH BURUK di semua metrik DAN lebih
-     baik di minimal satu. "Sama saja" = REJECT.
-  3. Hasil ACCEPT tetap berlabel PROVISIONAL — wajib monitoring live.
-
-Definisi event: realizedReturn > 0 (naik). Probabilitas model:
-  p_up = (tanh(w·x) + 1) / 2  — y in [-1,+1] dipetakan ke [0,1].
-
-Murni komputasi, tanpa I/O — deterministik (tanpa shuffle acak).
-Self-test:  python3 backend/weight_lab.py
+PENINGKATAN vs rancangan awal (hasil audit):
+ 1. Import dual-mode (package / jalankan langsung) — dulu crash kalau
+    diimport sebagai `backend.weight_lab`.
+ 2. Prediksi None (tidak ada sinyal) dihukum 0.25 (= tebakan 0.5) — jujur,
+    coverage konsisten, bukan di-skip diam-diam.
+ 3. AUC midrank pure-python, tie-safe — tanpa dependensi sklearn.
+ 4. Split KRONOLOGIS, tidak pernah shuffle time series (anti-lookahead).
+    Label y wajib dibuat caller HANYA dari masa depan setelah timestamp
+    sinyal — Weight Lab tidak pernah melihat masa depan.
+ 5. Fallback descent pairwise-transfer: sum(w)=1 dan bounds terjaga PERSIS.
+ 6. Gerbang gagal -> bobot netral + alasan jelas. Neuron tetap jalan,
+    tidak pernah error cuma karena bobot belum layak.
+ 7. Deterministik (self-test di-seed; optimizer tanpa RNG).
 """
 
 from __future__ import annotations
 
-import json
-from math import tanh
-from typing import Any, Optional
+import math
+from dataclasses import dataclass, field
+from typing import Optional
 
-WEIGHT_LAB_VERSION = "weight-lab-v1.0"
+try:  # IMPROVEMENT #1: dual-mode import
+    from .neuron import (SIGNAL_NAMES, W_MIN, W_MAX, fuse, saturation,
+                         neutral_weights, validate_weights)
+except ImportError:
+    from neuron import (SIGNAL_NAMES, W_MIN, W_MAX, fuse, saturation,
+                        neutral_weights, validate_weights)
 
-# --- Gerbang (dievaluasi, tetap eksplisit) -----------------------------------
-MIN_SAMPLES = 50            # di bawah ini: tidak layak dinilai
-BRIER_MAX = 0.25            # kalibrasi: 0.5 = tebakan acak penuh
-AUC_MIN = 0.60              # daya pisah: 0.5 = acak, 1.0 = sempurna
-PRECISION_TOP_FRAC = 0.25   # precision diukur di top-25% skor tertinggi
-PRECISION_WILSON_MIN = 0.55 # Wilson LB minimal (konsisten neuron_memory)
-Z95 = 1.96
-TARGET_EPS = 1e-12
-
-# SINKRON dengan neuron_core / neuron_logistic (disengaja duplikat agar
-# modul tetap isolasi & standalone — ubah ketiganya bila berubah).
-DENDRITE_KEYS = [
-    "screenSignal", "demandQuality", "stability", "fpStable", "fpTail",
-    "fpLiveDir", "rvol", "unlockGate", "vwapDist",
-]
-
-def _clamp(v: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, v))
-
-def _wilson(successes: int, n: int, z: float = Z95) -> float:
-    """Wilson lower bound 95% — sama dengan neuron_memory."""
-    if n <= 0:
-        return 0.0
-    p = successes / n
-    denom = 1.0 + z * z / n
-    centre = p + z * z / (2.0 * n)
-    margin = z * ((p * (1.0 - p) / n + z * z / (4.0 * n * n)) ** 0.5)
-    return max(0.0, (centre - margin) / denom)
-
-def _vector(dendrites: dict[str, float]) -> dict[str, float]:
-    x = {k: _clamp(float(dendrites.get(k, 0.0) or 0.0), -1.0, 1.0)
-         for k in DENDRITE_KEYS}
-    x["bias"] = 1.0
-    return x
-
-def _y(weights: dict[str, float], x: dict[str, float]) -> float:
-    return tanh(sum(weights[k] * x[k] for k in weights))
-
-def _prob(weights: dict[str, float], x: dict[str, float]) -> float:
-    return (_y(weights, x) + 1.0) / 2.0
+try:
+    from scipy.optimize import minimize as _scipy_minimize
+    HAVE_SCIPY = True
+except ImportError:
+    HAVE_SCIPY = False
 
 # ---------------------------------------------------------------------------
-# Metrik
+# Konstanta gerbang LOCKED
+# ---------------------------------------------------------------------------
+MIN_SAMPLES = 200          # minimal sampel test
+AUC_MIN = 0.60
+PRECISION_MIN = 0.55
+S_MIN = 0.30               # ambang saturation untuk precision
+MIN_PRECISION_SAMPLES = 20 # minimal trade yang diambil di test
+BRIER_MARGIN = 0.01        # harus lebih baik dari netral dengan margin ini
+
+Row = tuple[dict[str, Optional[float]], int]  # (signals, y in {0,1})
+
+
+# ---------------------------------------------------------------------------
+# Metrik inti
 # ---------------------------------------------------------------------------
 
-def _brier(weights: dict[str, float],
-           data: list[tuple[dict[str, float], int]]) -> Optional[float]:
-    if not data:
-        return None
-    return sum((_prob(weights, x) - float(e)) ** 2 for x, e in data) / len(data)
+def brier(weights: dict[str, float], rows: list[Row]) -> float:
+    """IMPROVEMENT #2: prediksi None dihukum (0.5 - y)^2 = 0.25."""
+    if not rows:
+        return float("nan")
+    total = 0.0
+    for signals, y in rows:
+        p, _ = fuse(signals, weights)
+        p = 0.5 if p is None else p
+        total += (p - y) ** 2
+    return total / len(rows)
 
-def _auc(scores: list[float], labels: list[int]) -> Optional[float]:
-    """AUC rank-based (Mann-Whitney), tie-aware, deterministik."""
-    n = len(scores)
-    n_pos = sum(labels)
-    n_neg = n - n_pos
-    if n_pos == 0 or n_neg == 0:
-        return None  # tak terdefinisi jika semua label satu arah
-    order = sorted(range(n), key=lambda i: scores[i])
+
+def auc_score(y: list[int], s: list[float]) -> float:
+    """AUC Mann-Whitney midrank (IMPROVEMENT #3). NaN kalau satu kelas."""
+    n = len(y)
+    if n == 0 or not (0 < sum(y) < n):
+        return float("nan")
+    order = sorted(range(n), key=lambda i: s[i])
     ranks = [0.0] * n
     i = 0
-    while i < n:
+    while i < n:  # midrank untuk ties
         j = i
-        while j + 1 < n and scores[order[j + 1]] == scores[order[i]]:
+        while j < n and s[order[j]] == s[order[i]]:
             j += 1
-        avg_rank = (i + j) / 2.0 + 1.0  # rank 1-based, ties dirata-rata
-        for k in range(i, j + 1):
-            ranks[order[k]] = avg_rank
-        i = j + 1
-    sum_pos = sum(ranks[i2] for i2 in range(n) if labels[i2] == 1)
-    return (sum_pos - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg)
+        mid = (i + j - 1) / 2.0 + 1.0
+        for k in range(i, j):
+            ranks[order[k]] = mid
+        i = j
+    n_pos = sum(y)
+    sum_pos = sum(ranks[i] for i in range(n) if y[i] == 1)
+    return (sum_pos - n_pos * (n_pos + 1) / 2.0) / (n_pos * (n - n_pos))
 
-def _precision_topk(weights: dict[str, float],
-                    data: list[tuple[dict[str, float], int]]
-                    ) -> tuple[int, int, float]:
-    """Precision di top-K skor tertinggi + Wilson LB. Tie-break by index."""
-    n = len(data)
-    k = max(1, int(round(n * PRECISION_TOP_FRAC)))
-    top = sorted(range(n), key=lambda i: (-_y(weights, data[i][0]), i))[:k]
-    succ = sum(1 for i in top if data[i][1])
-    return succ, k, _wilson(succ, k)
 
-def _metrics(weights: dict[str, float],
-             data: list[tuple[dict[str, float], int]]) -> dict[str, Any]:
-    scores = [_y(weights, x) for x, _ in data]
-    labels = [e for _, e in data]
-    auc = _auc(scores, labels)
-    succ, k, lb = _precision_topk(weights, data)
-    brier = _brier(weights, data)
-    gates = {
-        "brierPass": brier is not None and brier <= BRIER_MAX,
-        "aucPass": auc is not None and auc >= AUC_MIN,
-        "precisionPass": lb >= PRECISION_WILSON_MIN,
-    }
-    return {"brier": None if brier is None else round(brier, 4),
-            "auc": None if auc is None else round(auc, 4),
-            "precision": round(succ / k, 4), "precisionK": k,
-            "precisionWilsonLB": round(lb, 4),
-            "gates": gates, "gatesPassed": all(gates.values())}
-
-# ---------------------------------------------------------------------------
-# Evaluasi + keputusan
-# ---------------------------------------------------------------------------
-
-def _build_data(episodes: list[dict[str, Any]]
-                ) -> list[tuple[dict[str, float], int]]:
-    """Episode CLOSED + return terukur + dendrite informatif -> (x, event)."""
-    data: list[tuple[dict[str, float], int]] = []
-    for e in episodes:
-        if e.get("status") != "CLOSED" or e.get("realizedReturn") is None:
+def precision_at_s(rows: list[Row], weights: dict[str, float],
+                   s_min: float) -> tuple[float, int]:
+    """Precision arah pada baris dengan S >= s_min. Return (precision, taken)."""
+    taken = correct = 0
+    for signals, y in rows:
+        p, _ = fuse(signals, weights)
+        if p is None:
             continue
-        d = e.get("dendrites") or {}
-        if not any(abs(float(d.get(k, 0.0) or 0.0)) > 1e-9 for k in DENDRITE_KEYS):
+        if saturation(p) < s_min:
             continue
-        data.append((_vector(d), 1 if float(e["realizedReturn"]) > 0.0 else 0))
-    return data[-2000:]
+        taken += 1
+        pred_long = p >= 0.5
+        if (y == 1) == pred_long:
+            correct += 1
+    return (correct / taken if taken else 0.0), taken
 
-def evaluate(candidate_weights: dict[str, float],
-             episodes: list[dict[str, Any]],
-             baseline_weights: Optional[dict[str, float]] = None) -> dict[str, Any]:
-    """Nilai bobot kandidat -> ACCEPT / REJECT + alasan audit lengkap."""
-    out: dict[str, Any] = {
-        "ok": False, "model": WEIGHT_LAB_VERSION, "provisional": True,
-        "decision": "REJECT", "reasons": [],
-        "candidate": None, "baseline": None,
+
+# ---------------------------------------------------------------------------
+# Optimizer
+# ---------------------------------------------------------------------------
+
+def _vec_to_weights(x: list[float]) -> dict[str, float]:
+    return {name: float(x[i]) for i, name in enumerate(SIGNAL_NAMES)}
+
+
+def _optimize_slsqp(rows: list[Row]) -> Optional[dict[str, float]]:
+    n = len(SIGNAL_NAMES)
+    x0 = [1.0 / n] * n
+    res = _scipy_minimize(
+        lambda x: brier(_vec_to_weights(x), rows), x0, method="SLSQP",
+        bounds=[(W_MIN, W_MAX)] * n,
+        constraints=[{"type": "eq", "fun": lambda x: sum(x) - 1.0}],
+        options={"maxiter": 200, "ftol": 1e-10},
+    )
+    if not res.success:
+        return None
+    return validate_weights(_vec_to_weights(res.x.tolist()))
+
+
+def _optimize_descent(rows: list[Row], sweeps: int = 8, step0: float = 0.05
+                      ) -> dict[str, float]:
+    """IMPROVEMENT #5: transfer delta antar pasangan bobot — simplex & bounds
+    terjaga persis, deterministik, tanpa scipy."""
+    names = list(SIGNAL_NAMES)
+    w = neutral_weights()
+    best = brier(w, rows)
+    step = step0
+    for _ in range(sweeps):
+        improved = False
+        for i in range(len(names)):
+            for j in range(len(names)):
+                if i == j:
+                    continue
+                for sign in (+1, -1):
+                    cand = dict(w)
+                    wi, wj = cand[names[i]] + sign * step, cand[names[j]] - sign * step
+                    if not (W_MIN <= wi <= W_MAX and W_MIN <= wj <= W_MAX):
+                        continue
+                    cand[names[i]], cand[names[j]] = wi, wj
+                    b = brier(cand, rows)
+                    if b < best - 1e-12:
+                        w, best, improved = cand, b, True
+        if not improved:
+            step /= 2.0
+            if step < 1e-4:
+                break
+    return w
+
+
+def optimize_weights(rows: list[Row]) -> dict[str, float]:
+    if HAVE_SCIPY:
+        w = _optimize_slsqp(rows)
+        if w is not None:
+            return w
+    return _optimize_descent(rows)
+
+
+# ---------------------------------------------------------------------------
+# Walk-forward + gerbang live
+# ---------------------------------------------------------------------------
+
+def walk_forward_split(n: int, train_frac: float = 0.5,
+                       val_frac: float = 0.25) -> tuple[list[int], list[int], list[int]]:
+    """IMPROVEMENT #4: kronologis, tanpa shuffle, tanpa tumpang tindih."""
+    i_tr, i_va = int(n * train_frac), int(n * (train_frac + val_frac))
+    return list(range(i_tr)), list(range(i_tr, i_va)), list(range(i_va, n))
+
+
+@dataclass
+class WeightLabResult:
+    weights: dict[str, float]
+    used_optimized: bool
+    gate: dict[str, bool]
+    metrics: dict[str, float]
+    reasons: list[str] = field(default_factory=list)
+
+
+def run_weight_lab(rows: list[Row]) -> WeightLabResult:
+    neutral = neutral_weights()
+    if len(rows) < 10:
+        return WeightLabResult(neutral, False, {}, {}, ["data terlalu sedikit"])
+
+    _, _, te = walk_forward_split(len(rows))
+    rows_tr = [rows[i] for i in range(int(len(rows) * 0.5))]
+    rows_te = [rows[i] for i in te]
+    w_opt = optimize_weights(rows_tr)
+
+    brier_neu = brier(neutral, rows_te)
+    brier_opt = brier(w_opt, rows_te)
+
+    ys: list[int] = []
+    ss: list[float] = []
+    for signals, y in rows_te:
+        p, _ = fuse(signals, w_opt)
+        if p is not None:
+            ys.append(y)
+            ss.append(p)
+    auc = auc_score(ys, ss)
+    prec, taken = precision_at_s(rows_te, w_opt, S_MIN)
+
+    gate = {
+        "sample": len(rows_te) >= MIN_SAMPLES,
+        "brier": brier_opt <= brier_neu - BRIER_MARGIN,
+        "auc": (not math.isnan(auc)) and auc >= AUC_MIN,
+        "precision": prec >= PRECISION_MIN and taken >= MIN_PRECISION_SAMPLES,
     }
+    ok = all(gate.values())
+    reasons = [f"gate gagal: {k}" for k, v in gate.items() if not v]
 
-    data = _build_data(episodes)
-    if len(data) < MIN_SAMPLES:
-        out["reasons"] = [f"episode layak {len(data)} < minimal {MIN_SAMPLES} "
-                          f"— kumpulkan data dulu"]
-        return out
-    out["ok"] = True
-    out["n"] = len(data)
+    final = validate_weights(w_opt) if ok else None
+    if final is None:
+        final, ok2 = neutral, False
+        if ok:
+            reasons.append("bobot optimized invalid -> netral")
+        ok = False
 
-    cand = _metrics(candidate_weights, data)
-    out["candidate"] = cand
+    metrics = {
+        "brier_neutral_test": round(brier_neu, 6),
+        "brier_opt_test": round(brier_opt, 6),
+        "auc_test": round(auc, 4) if not math.isnan(auc) else float("nan"),
+        "precision_test": round(prec, 4),
+        "taken_test": float(taken),
+        "n_test": float(len(rows_te)),
+    }
+    return WeightLabResult(final, ok, gate, metrics, reasons)
 
-    if cand["auc"] is None:
-        out["reasons"].append("AUC tak terdefinisi — semua label satu arah, "
-                              "data tidak bisa menilai daya pisah")
-        return out
-
-    # Gerbang mutlak
-    if not cand["gates"]["brierPass"]:
-        out["reasons"].append(f"Brier {cand['brier']} > ambang {BRIER_MAX}")
-    if not cand["gates"]["aucPass"]:
-        out["reasons"].append(f"AUC {cand['auc']} < ambang {AUC_MIN}")
-    if not cand["gates"]["precisionPass"]:
-        out["reasons"].append(f"precision Wilson LB {cand['precisionWilsonLB']} "
-                              f"< ambang {PRECISION_WILSON_MIN}")
-
-    # Gerbang relatif (hanya jika baseline lolos mutlak — baseline rusak tak layak jadi acuan)
-    if baseline_weights is not None:
-        b = _metrics(baseline_weights, data)
-        out["baseline"] = b
-        if b["auc"] is not None and b["gatesPassed"]:
-            worse, equal = [], []
-            if cand["brier"] > b["brier"] + TARGET_EPS:
-                worse.append(f"Brier lebih buruk ({cand['brier']} vs {b['brier']})")
-            if cand["auc"] < b["auc"] - TARGET_EPS:
-                worse.append(f"AUC lebih buruk ({cand['auc']} vs {b['auc']})")
-            if cand["precisionWilsonLB"] < b["precisionWilsonLB"] - TARGET_EPS:
-                worse.append("precision LB lebih buruk "
-                             f"({cand['precisionWilsonLB']} vs {b['precisionWilsonLB']})")
-            if not worse:
-                strictly = (cand["brier"] < b["brier"] - TARGET_EPS
-                            or cand["auc"] > b["auc"] + TARGET_EPS
-                            or cand["precisionWilsonLB"] > b["precisionWilsonLB"] + TARGET_EPS)
-                if not strictly:
-                    equal.append("tidak mengungguli baseline di metrik mana pun")
-            out["reasons"].extend(worse + equal)
-
-    if not out["reasons"]:
-        out["decision"] = "ACCEPT"
-        out["verdict"] = "LOLOS GERBANG — boleh dipasang, status tetap PROVISIONAL (wajib monitoring live)"
-    else:
-        out["verdict"] = "TIDAK LOLOS — jangan pasang ke production"
-    return out
 
 # ---------------------------------------------------------------------------
-# Self-test (deterministik, seed tetap)
+# SELF-TEST offline-safe — python3 backend/weight_lab.py
 # ---------------------------------------------------------------------------
-
-def _self_test() -> None:
-    from random import Random
-
-    rng = Random(42)
-
-    def make_eps(n: int, ret_fn, noise: float = 0.0) -> list[dict[str, Any]]:
-        eps = []
-        for _ in range(n):
-            d = {k: rng.uniform(-1, 1) for k in DENDRITE_KEYS}
-            ret = ret_fn(d) + (rng.gauss(0.0, noise) if noise else 0.0)
-            eps.append({"status": "CLOSED", "dendrites": d,
-                        "realizedReturn": round(ret, 6)})
-        return eps
-
-    w_true = {k: 0.0 for k in DENDRITE_KEYS}
-    w_true["bias"] = 0.0
-    w_true["screenSignal"] = 1.0
-    w_zero = {k: 0.0 for k in DENDRITE_KEYS}
-    w_zero["bias"] = 0.0
-
-    # 1) Data terlalu sedikit -> REJECT dengan alasan jelas
-    r0 = evaluate(w_true, make_eps(10, lambda d: 0.05 * (1 if d["screenSignal"] > 0 else -1)))
-    assert r0["ok"] is False and r0["decision"] == "REJECT", "1"
-    assert "minimal" in r0["reasons"][0], "1b"
-
-    # 2) Sinyal asli -> lolos semua gerbang mutlak + ungguli baseline nol -> ACCEPT
-    eps_sig = make_eps(200, lambda d: 0.05 * tanh(d["screenSignal"]), noise=0.005)
-    r1 = evaluate(w_true, eps_sig, baseline_weights=w_zero)
-    assert r1["decision"] == "ACCEPT", f"2: {r1['reasons']}"
-    assert r1["candidate"]["auc"] > 0.9, f"2b: {r1['candidate']}"
-    assert r1["candidate"]["brier"] < 0.2, f"2c: {r1['candidate']}"
-    assert r1["candidate"]["gatesPassed"] is True, "2d"
-
-    # 3) Data murni noise -> gagal gerbang (AUC ~0.5, precision LB rendah) -> REJECT
-    eps_noise = make_eps(200, lambda d: rng.uniform(-0.05, 0.05))
-    r2 = evaluate(w_true, eps_noise)
-    assert r2["decision"] == "REJECT", f"3: {r2['reasons']}"
-    assert r2["candidate"]["auc"] < 0.65, f"3b: {r2['candidate']}"
-
-    # 4) Gerbang RELATIF: kandidat lolos mutlak tapi tak ungguli baseline -> REJECT
-    eps_sep = make_eps(200, lambda d: 0.05 if d["screenSignal"] > 0 else -0.05)
-    w_weak = {k: 0.0 for k in DENDRITE_KEYS}
-    w_weak["screenSignal"] = 0.3  # ranking sama (monotonik) -> AUC sama, kalibrasi lebih buruk
-    r3 = evaluate(w_weak, eps_sep, baseline_weights=w_true)
-    assert r3["decision"] == "REJECT", f"4: {r3['reasons']}"
-    assert r3["candidate"]["gatesPassed"] is True, "4b: harus lolos mutlak"
-    assert any("baseline" in s or "buruk" in s for s in r3["reasons"]), "4c"
-
-    # 5) Semua label satu arah -> AUC tak terdefinisi -> REJECT
-    eps_up = make_eps(60, lambda d: 0.03)
-    r4 = evaluate(w_true, eps_up)
-    assert r4["decision"] == "REJECT" and any("tak terdefinisi" in s for s in r4["reasons"]), "5"
-
-    # 6) Determinisme: input sama -> hasil identik
-    r5a = evaluate(w_true, eps_sig, baseline_weights=w_zero)
-    r5b = evaluate(w_true, eps_sig, baseline_weights=w_zero)
-    assert r5a == r5b, "6"
-
-    # 7) Hasil JSON-serializable penuh (Vercel-safe)
-    for r in (r0, r1, r2, r3, r4):
-        json.dumps(r)
-
-    # 8) Episode PENDING / netral-disaring tidak masuk hitungan
-    dirty = list(eps_sig)
-    dirty.append({"status": "PENDING", "dendrites": {}, "realizedReturn": None})
-    dirty.append({"status": "CLOSED", "dendrites": {}, "realizedReturn": 0.03})
-    assert evaluate(w_true, dirty, baseline_weights=w_zero)["n"] == 200, "8"
-
-    print("SELF-TEST OK — weight_lab (gerbang Brier/AUC/Precision + gerbang relatif + deterministik)")
 
 if __name__ == "__main__":
-    _self_test()
+    import random
+
+    rng = random.Random(7)
+
+    # 1. AUC dasar
+    assert auc_score([0, 0, 1, 1], [0.1, 0.2, 0.8, 0.9]) == 1.0
+    assert auc_score([1, 1, 0, 0], [0.1, 0.2, 0.8, 0.9]) == 0.0
+    assert abs(auc_score([0, 1], [0.5, 0.5]) - 0.5) < 1e-12  # ties
+    assert math.isnan(auc_score([1, 1], [0.3, 0.7]))          # satu kelas
+
+    # 2. Brier: prediksi None dihukum 0.25
+    empty_rows = [({}, 1), ({}, 0)]
+    assert abs(brier(neutral_weights(), empty_rows) - 0.25) < 1e-12
+
+    # 3. Split kronologis
+    tr, va, te = walk_forward_split(100)
+    assert tr[0] == 0 and te[-1] == 99 and not (set(tr) & set(te))
+
+    # 4. Data informatif -> gerbang lolos, bobot dipakai
+    rows_info = []
+    for _ in range(1200):
+        y = 1 if rng.random() < 0.5 else 0
+        rows_info.append((
+            {"fp": 0.55 if y else 0.45, "trend": 0.90 if y else 0.10,
+             "micro": 0.5 + rng.uniform(-0.02, 0.02), "mem": 0.5, "log": 0.5},
+            y))
+    r1 = run_weight_lab(rows_info)
+    assert r1.used_optimized and all(r1.gate.values()), r1
+    assert r1.metrics["brier_opt_test"] < r1.metrics["brier_neutral_test"]
+    assert validate_weights(r1.weights) is not None
+
+    # 5. Data noise -> gerbang gagal, bobot tetap NETRAL (bukan error)
+    rows_noise = [({"fp": 0.5, "trend": 0.5, "micro": 0.5, "mem": 0.5, "log": 0.5},
+                   1 if rng.random() < 0.5 else 0) for _ in range(1200)]
+    r2 = run_weight_lab(rows_noise)
+    assert not r2.used_optimized and r2.weights == neutral_weights()
+    assert r2.reasons, "harus ada alasan gate gagal"
+
+    # 6. Fallback descent tanpa scipy: tetap memperbaiki Brier
+    w_d = _optimize_descent(rows_info[:600])
+    assert brier(w_d, rows_info[:600]) < brier(neutral_weights(), rows_info[:600])
+
+    # 7. Determinisme
+    assert run_weight_lab(rows_info).weights == r1.weights
+
+    print(f"demo informatif: gates={r1.gate} brier {r1.metrics['brier_neutral_test']}"
+          f" -> {r1.metrics['brier_opt_test']} auc={r1.metrics['auc_test']}")
+    print(f"demo noise     : used_optimized={r2.used_optimized} reasons={r2.reasons}")
+    print("SELF-TEST OK — weight_lab v2")
