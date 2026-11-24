@@ -273,6 +273,7 @@ export default function NeuronPage() {
                 ["Model version", model.version ? `v${model.version}` : "Not loaded"],
                 ["RMSProp updates", model.state?.nUpdates ?? "—"],
                 ["Snapshot checksum", model.checksumValid === true ? "Verified" : model.checksum ? "Mismatch" : "Not available"],
+                ["Weight integrity", model.weightIntegrity?.ok === true ? "All keys / bounds OK" : model.weightIntegrity ? "Needs review" : "Not checked"],
                 ["Last changed", fmtTime(model.updated_at)],
                 ["Promotion policy", "Champion / Candidate"],
               ].map(([k,v]) => <div key={k} className="flex items-center justify-between gap-4 border-b border-line pb-2"><span className="text-muted">{k}</span><strong className="text-right font-mono font-medium text-ink">{v}</strong></div>)}
