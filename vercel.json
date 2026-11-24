@@ -24,11 +24,5 @@
       "src": "/(.*)",
       "dest": "/index.html"
     }
-  ],
-  "crons": [
-    {
-      "path": "/api/neuron/cron",
-      "schedule": "*/5 * * * *"
-    }
   ]
 }
