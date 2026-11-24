@@ -26,6 +26,12 @@ The currently connected Supabase account showed only inactive projects at implem
 
 The existing neuron weights were initialized around the original screening feature definitions. The 5m worker computes the existing screening-v2 feature transform on 5m candles, so this is an experimental timeframe adaptation. The output is explicitly provisional and `(tanh(y)+1)/2` is only a monotonic score mapping, not a calibrated probability. The Brier score is diagnostic, not proof of predictive edge. Collect an adequate out-of-sample sample before interpreting accuracy or enabling candidate promotion.
 
-## Scheduler caveat
+## Five-minute scheduler
 
-Vercel Cron is configured for every five minutes in `vercel.json`. The job must be deployed to Production and supported by the selected Vercel plan. Confirm the Cron invocation history after deployment. The UI countdown is only a clock display; scheduler status is reported separately and must not be inferred from the countdown.
+The five-minute schedule uses GitHub Actions rather than Vercel Cron so the Vercel deployment does not depend on the account's Cron frequency tier. The workflow is `.github/workflows/neuron-live-cron.yml`.
+
+Configure these GitHub repository settings:
+- **Actions → Variables**: `CYT_API_BASE_URL` = the exact production base URL of this CYT deployment (no trailing slash).
+- **Actions → Secrets**: `NEURON_CRON_SECRET` = the same random secret configured as the Vercel environment variable `NEURON_CRON_SECRET`.
+
+GitHub scheduled workflows run from the repository's default branch. Merge this workflow to `main` before expecting automatic scheduled runs. `workflow_dispatch` is available for a manual test. GitHub schedule events use UTC and can be delayed under load; check the Actions run history and database timestamps. The UI countdown is only a clock display, not proof that the scheduler ran.
