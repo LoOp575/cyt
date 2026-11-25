@@ -186,8 +186,12 @@ def build_dendrites(
         d["vwapDist"] = sat(float(f.get("closeVsVwap20", 0.0) or 0.0))
     if fp and fp.get("ok"):
         m = fp.get("metrics") or {}
-        d["fpStable"] = clamp(2.0 * float(m.get("pStable", 0.5) or 0.5) - 1.0, -1.0, 1.0)
-        d["fpTail"] = clamp(1.0 - 2.0 * float(m.get("pTailCrash", 0.5) or 0.5), -1.0, 1.0)
+        p_stable = m.get("pStable", 0.5)
+        p_tail_crash = m.get("pTailCrash", 0.5)
+        p_stable = 0.5 if p_stable is None else float(p_stable)
+        p_tail_crash = 0.5 if p_tail_crash is None else float(p_tail_crash)
+        d["fpStable"] = clamp(2.0 * p_stable - 1.0, -1.0, 1.0)
+        d["fpTail"] = clamp(1.0 - 2.0 * p_tail_crash, -1.0, 1.0)
     if fp_live_dir is not None:
         d["fpLiveDir"] = clamp(float(fp_live_dir), -1.0, 1.0)
     return d

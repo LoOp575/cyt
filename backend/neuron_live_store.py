@@ -181,13 +181,44 @@ async def _write_audit(client: httpx.AsyncClient, model_version: int, weights: d
 async def run_cycle(client: httpx.AsyncClient) -> dict[str, Any]:
     from backend.neuron_core import build_dendrites
     from backend.screening_v2 import compute_features_v2
+    from backend.fp_live import forecast_fp_live
 
     candles = await _latest_closed_klines(client)
     latest = candles[-1]
     screen = compute_features_v2(candles, regime=None)
     if not screen.get("ok"):
         raise RuntimeError(screen.get("reason") or "screening-v2 did not score the 5m candle series")
-    features = build_dendrites(screen=screen)
+
+    # FP Live is evaluated on the same closed 5m candle set and the same
+    # 5-minute horizon as the Neuron label. Do not substitute the daily-horizon
+    # candle FP model here: its probabilities are not comparable to a 5m target.
+    fp_live = forecast_fp_live(
+        candles,
+        symbol=SYMBOL,
+        horizon_min=5.0,
+        include_curve=False,
+        include_first_passage=False,
+    )
+    if not fp_live.get("ok"):
+        raise RuntimeError(fp_live.get("reason") or "FP Live failed for the 5m Neuron cycle")
+    fp_stats = fp_live.get("stats") or {}
+    required_fp = ("pStayBand", "pTailCrash", "netEdge")
+    missing_fp = [key for key in required_fp if fp_stats.get(key) is None]
+    if missing_fp:
+        raise RuntimeError(f"FP Live missing required 5m metrics: {', '.join(missing_fp)}")
+
+    fp_input = {
+        "ok": True,
+        "metrics": {
+            "pStable": float(fp_stats["pStayBand"]),
+            "pTailCrash": float(fp_stats["pTailCrash"]),
+        },
+    }
+    features = build_dendrites(
+        screen=screen,
+        fp=fp_input,
+        fp_live_dir=float(fp_stats["netEdge"]),
+    )
     model_row, neuron = await _load_model(client)
     prediction = neuron.predict(features)
     y = float(prediction["y"])
