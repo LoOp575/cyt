@@ -139,11 +139,16 @@ def compute_pump_radar(candles: list[dict[str, Any]], symbol: str = "",
     base_rvol = _ratio(base_today, base_median)
     quote_rvol = _ratio(quote_today, quote_median)
 
-    # Seven-day aggregate versus seven times the prior daily median.
+    # Seven-day aggregate versus a separate 30D median ending BEFORE
+    # the evaluated 7D window, preventing the signal week from diluting its own baseline.
     quote_7d = _window_sum(candles, "quoteVolume", n - 7, n)
     base_7d = _window_sum(candles, "volume", n - 7, n)
-    weekly_quote_rvol = _ratio(quote_7d, quote_median * 7.0)
-    weekly_base_rvol = _ratio(base_7d, base_median * 7.0)
+    prior_7d_base = [_number(c, "volume") for c in candles[n - 37:n - 7]]
+    prior_7d_quote = [_number(c, "quoteVolume") for c in candles[n - 37:n - 7]]
+    base_median_7d = _median(prior_7d_base)
+    quote_median_7d = _median(prior_7d_quote)
+    weekly_quote_rvol = _ratio(quote_7d, quote_median_7d * 7.0)
+    weekly_base_rvol = _ratio(base_7d, base_median_7d * 7.0)
 
     # 90D drawdown from the highest high in the last 90 closed candles.
     high_90d = max(_number(c, "high") for c in candles[-90:])
