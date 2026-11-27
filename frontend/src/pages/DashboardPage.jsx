@@ -532,6 +532,7 @@ export default function DashboardPage() {
                       <td>
                         <div className="flex flex-col gap-1 items-start">
                           <VerdictBadge tone={r.verdictTone} label={r.verdictLabel || r.verdict} />
+                          <RadarBadge symbol={r.symbol} preloaded={radarStatuses[r.symbol]} />
                           {r.verdict === "INSUFFICIENT_DATA" && r.bars ? (
                             <span
                               className="font-mono text-[9.5px] text-muted"
