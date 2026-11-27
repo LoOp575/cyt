@@ -995,7 +995,8 @@ class FpV2CompareSimRequest(BaseModel):
     """Request body for POST /api/fokker-planck-v2/compare/simulate."""
 
     bidDepth: float = Field(100.0, ge=0.0, le=1e12)
-    askDepth: float = Field(100.0, ge=0.0, le=1e12)    farBidDepth: float = Field(0.0, ge=0.0, le=1e12)
+    askDepth: float = Field(100.0, ge=0.0, le=1e12)    
+    farBidDepth: float = Field(0.0, ge=0.0, le=1e12)
     farAskDepth: float = Field(0.0, ge=0.0, le=1e12)
     wallDistancePct: float = Field(0.008, ge=0.003, le=0.05)
     decayLambda: Optional[float] = Field(None, ge=100.0, le=2000.0)
