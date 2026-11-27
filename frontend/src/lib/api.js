@@ -79,6 +79,19 @@ export function fetchCalibrationHistory(limit = 25) {
   return fetchJSON(`/api/calibrate/history?limit=${limit}`);
 }
 
+
+/* ---------- Pump Radar V2: dual detector + walk-forward outcomes ---------- */
+export function fetchPumpRadarV2(symbol, history = 180) {
+  const params = new URLSearchParams({ history: String(history) });
+  return fetchJSON(`/api/pump-radar/v2/${encodeURIComponent(symbol)}?${params.toString()}`);
+}
+export function fetchPumpRadarV2Backtest(symbol, history = 365, step = 1) {
+  const params = new URLSearchParams({ history: String(history), step: String(step) });
+  return fetchJSON(
+    `/api/pump-radar/v2/${encodeURIComponent(symbol)}/backtest?${params.toString()}`
+  );
+}
+
 /* ---------- Fokker–Planck distribution & spoofing lab (additive) ---------- */
 
 export function fetchFpSpec() {
