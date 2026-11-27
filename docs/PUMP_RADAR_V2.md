@@ -34,7 +34,7 @@ Initial experimental conditions (all required):
 ## Formula definitions
 
 - Daily RVOL = current closed-day volume / median of the prior 30 closed daily volumes.
-- 7D RVOL = sum(last 7 closed daily volumes) / (7 x median of the prior 30 daily volumes).
+- 7D RVOL = sum(last 7 closed daily volumes) / (7 x median of the 30 closed daily volumes immediately BEFORE that 7D window).
 - 90D drawdown = latest close / highest high over last 90 closed candles - 1.
 - Buy share = takerBuyQuote / quoteVolume. Base equivalent is also exposed.
 - Price Demand Efficiency = 7D price return (%) / 7D Quote Volume growth (%). It is descriptive only and is not used as a standalone trigger.
