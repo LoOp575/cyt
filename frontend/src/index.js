@@ -11,6 +11,7 @@ import FokkerPlanckPage from "./pages/FokkerPlanckPage";
 import FokkerPlanckV2Page from "./pages/FokkerPlanckV2Page";
 import FpLivePage from "./pages/FpLivePage";
 import NeuronPage from "./pages/NeuronPage";
+import PumpRadarPage from "./pages/PumpRadarPage";
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
@@ -19,6 +20,7 @@ root.render(
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<DashboardPage />} />
+          <Route path="/pump-radar" element={<PumpRadarPage />} />
           <Route path="/token/:symbol" element={<TokenPage />} />
           <Route path="/fokker-planck" element={<FokkerPlanckPage />} />
           <Route path="/fokker-planck/:symbol" element={<FokkerPlanckPage />} />
