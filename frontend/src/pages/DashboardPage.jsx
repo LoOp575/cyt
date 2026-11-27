@@ -126,6 +126,7 @@ export default function DashboardPage() {
   const rows = state.payload?.data ?? [];
   const rowSymbols = useMemo(() => rows.map((r) => r.symbol), [rows]);
   const { ticks: liveTicks, live } = useLiveTickers(rowSymbols);
+  const { statuses: radarStatuses } = useRadarAll(rowSymbols); 
 
   const filtered = useMemo(() => {
     let out = rows.filter((r) => r.ok !== false);
