@@ -497,7 +497,7 @@ async def screen(
                 combined_debug.append(reason)
                 seen_reasons.add(reason)       
               if len(combined_debug) >= 15:
-            break
+                  break
     result = {
         "ok": True,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
