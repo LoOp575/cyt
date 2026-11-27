@@ -1491,7 +1491,8 @@ async def screen_v2(symbol: str):
     result = await _screen_v2_result(client, sym)
     result["verdictLabel"] = VERDICT_META.get(result.get("verdict", "NEUTRAL"), VERDICT_META["NEUTRAL"])["label"]
     result["verdictTone"] = VERDICT_META.get(result.get("verdict", "NEUTRAL"), VERDICT_META["NEUTRAL"])["tone"]
-    await _attach_cryptorank(client, [result])    return result
+    await _attach_cryptorank(client, [result])
+    return result
 
 
 @app.post("/api/neuron/predict")
