@@ -23,9 +23,6 @@ Static note: Vercel serves frontend/build and forwards /api/* here. Locally,
 uvicorn serves the same app; if frontend/build exists it is mounted at /.
 """
 
-# 1) DI PALING ATAS — bareng import lainnya:
-from fastapi import HTTPException      # kalau belum ada
-from radar import radar_summary        # pinjam otak dari radar.py
 from __future__ import annotations
 import os
 from collections import deque
@@ -41,8 +38,10 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
+
+from backend.radar import radar_summary
 
 from backend import (
     calibration_lab,
@@ -247,8 +246,7 @@ def _candidate_count(limit: int) -> int:
 
 def _rank_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows.sort(
-        key=lambda r: (
-            VERDICT_META.get(r.get("verdict", "NEUTRAL"), {}).get("rank", 9),
+        key=lambda r: (            VERDICT_META.get(r.get("verdict", "NEUTRAL"), {}).get("rank", 9),
             -(r.get("scores", {}).get("signal") or 0.0),
         )
     )
@@ -497,8 +495,7 @@ async def screen(
         for reason in (kpayload.get("debug") or [])[:3]:
             if reason not in seen_reasons:
                 combined_debug.append(reason)
-                seen_reasons.add(reason)
-        if len(combined_debug) >= 15:
+                seen_reasons.add(reason)        if len(combined_debug) >= 15:
             break
     result = {
         "ok": True,
@@ -747,8 +744,7 @@ async def fp_universe(
     cr_map: dict[str, Any] = {}
     try:
         cr_map = await cryptorank.symbol_map(client)
-    except Exception:  # noqa: BLE001 - optional enrichment never blocks
-        cr_map = {}
+    except Exception:  # noqa: BLE001 - optional enrichment never blocks        cr_map = {}
 
     out_rows: list[dict[str, Any]] = []
     for sym in symbols:
@@ -997,8 +993,7 @@ class FpV2CompareSimRequest(BaseModel):
     """Request body for POST /api/fokker-planck-v2/compare/simulate."""
 
     bidDepth: float = Field(100.0, ge=0.0, le=1e12)
-    askDepth: float = Field(100.0, ge=0.0, le=1e12)
-    farBidDepth: float = Field(0.0, ge=0.0, le=1e12)
+    askDepth: float = Field(100.0, ge=0.0, le=1e12)    farBidDepth: float = Field(0.0, ge=0.0, le=1e12)
     farAskDepth: float = Field(0.0, ge=0.0, le=1e12)
     wallDistancePct: float = Field(0.008, ge=0.003, le=0.05)
     decayLambda: Optional[float] = Field(None, ge=100.0, le=2000.0)
@@ -1248,7 +1243,6 @@ async def fp_v2_compare_simulate(req: FpV2CompareSimRequest):
         mid_price=req.midPrice,
     )
 
-
 @app.post("/api/fokker-planck-v2/compare/backtest")
 async def fp_v2_compare_backtest(req: FpBacktestRequest):
     """Chronological walk-forward accuracy showdown: untouched v1 vs v2 vs v1∩v2 ensemble."""
@@ -1497,8 +1491,7 @@ async def screen_v2(symbol: str):
     result = await _screen_v2_result(client, sym)
     result["verdictLabel"] = VERDICT_META.get(result.get("verdict", "NEUTRAL"), VERDICT_META["NEUTRAL"])["label"]
     result["verdictTone"] = VERDICT_META.get(result.get("verdict", "NEUTRAL"), VERDICT_META["NEUTRAL"])["tone"]
-    await _attach_cryptorank(client, [result])
-    return result
+    await _attach_cryptorank(client, [result])    return result
 
 
 @app.post("/api/neuron/predict")
@@ -1709,6 +1702,15 @@ async def neuron_live_cron(request: Request):
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Neuron cycle failed: {exc}")
 
+# Radar route must be registered before the catch-all SPA fallback.
+@app.get("/api/radar/{symbol}")
+def get_radar(symbol: str):
+    try:
+        return radar_summary(symbol.upper())
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 # ---------------------------------------------------------------------------
 # Static frontend (local preview / non-Vercel serving). Registered last so
 # /api/* always wins.
@@ -1725,9 +1727,3 @@ if FRONTEND_BUILD.is_dir():
         if full_path and candidate.is_file() and str(candidate).startswith(str(FRONTEND_BUILD.resolve())):
             return FileResponse(str(candidate))
         return FileResponse(str(FRONTEND_BUILD / "index.html"))
-      @app.get("/api/radar/{symbol}")
-def get_radar(symbol: str):
-    try:
-        return radar_summary(symbol.upper())
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
