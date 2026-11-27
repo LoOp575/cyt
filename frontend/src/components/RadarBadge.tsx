@@ -1,4 +1,4 @@
-import { useRadar, type RadarSummary } from "../lib/useRadar";
+import type { RadarSummary } from "../lib/useRadar";
 
 interface Props {
   symbol: string;
@@ -7,7 +7,9 @@ interface Props {
 }
 
 export default function RadarBadge({ symbol, compact = true }: Props) {
-  const { data, loading, error } = useRadar(symbol);
+  const data = preloaded ?? null;
+  const loading = preloaded === undefined;
+  const error = false;
 
   // ---------- KONDISI LOADING ----------
   if (loading) {
