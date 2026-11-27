@@ -25,6 +25,7 @@ function Wordmark() {
 
 const NAV = [
   { to: "/", label: "Screener" },
+  { to: "/pump-radar", label: "Pump Radar V2" },
   { to: "/fokker-planck", label: "Fokker–Planck" },
   { to: "/fokker-planck-v2", label: "FP v2 · Banding" },
   { to: "/fp-live", label: "FP Live" },
