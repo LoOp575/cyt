@@ -4,8 +4,6 @@
 import { useEffect, useState } from "react";
 import type { RadarSummary } from "./useRadar";
 
-const API_URL = "http://localhost:8000"; // ⚠️ samain sama useRadar.ts
-
 export function useRadarAll(symbols: string[]) {
   const [statuses, setStatuses] = useState<Record<string, RadarSummary | null>>({});
   const [loading, setLoading] = useState(true);
@@ -21,7 +19,7 @@ export function useRadarAll(symbols: string[]) {
 
     Promise.all(
       list.map((sym) =>
-        fetch(`${API_URL}/api/radar/${sym.toUpperCase()}`)
+        fetch(`/api/radar/${encodeURIComponent(sym.toUpperCase())}`)
           .then((r) => (r.ok ? r.json() : null))
           .then((json: RadarSummary | null) => [sym, json] as const)
           .catch(() => [sym, null] as const)
