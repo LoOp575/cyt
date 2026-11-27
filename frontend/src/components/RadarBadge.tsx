@@ -1,11 +1,9 @@
-// ============================================================
-// RadarBadge.tsx — Badge PUMP RADAR untuk Meridian
-// ============================================================
-import { useRadar } from "../lib/useRadar"; // ⚠️ sesuaikan: "@/lib/useRadar" kalo pake alias
+import { useRadar, type RadarSummary } from "../lib/useRadar";
 
 interface Props {
-  symbol: string;   // mis. "SEIUSDT"
-  compact?: boolean; // true = versi kecil buat tabel
+  symbol: string;
+  compact?: boolean;
+  preloaded?: RadarSummary | null; // ← BARU: data dari useRadarAll
 }
 
 export default function RadarBadge({ symbol, compact = true }: Props) {
