@@ -745,7 +745,8 @@ async def fp_universe(
     cr_map: dict[str, Any] = {}
     try:
         cr_map = await cryptorank.symbol_map(client)
-    except Exception:  # noqa: BLE001 - optional enrichment never blocks        cr_map = {}
+    except Exception:  # noqa: BLE001 - optional enrichment never blocks 
+        cr_map = {}    
 
     out_rows: list[dict[str, Any]] = []
     for sym in symbols:
