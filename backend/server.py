@@ -42,6 +42,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.radar import radar_summary
+from backend.pump_radar_v2 import compute_pump_radar
 
 from backend import (
     calibration_lab,
@@ -411,6 +412,120 @@ async def calibrate_history(limit: int = Query(25, ge=1, le=25)):
         "volatile": True,
         "note": "In-memory per instance; hilang saat redeploy. Frontend menyimpan riwayat di browser (localStorage).",
         "runs": list(_CAL_HISTORY)[::-1][:limit],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Pump Radar V2 (isolated/additive; legacy radar and Screener remain untouched)
+# ---------------------------------------------------------------------------
+
+def _closed_daily_candles(candles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove the current UTC daily candle; only completed daily bars are scored."""
+    now = datetime.now(timezone.utc)
+    utc_day_start_ms = int(now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
+    return [c for c in candles if int(c.get("date") or 0) < utc_day_start_ms]
+
+
+@app.get("/api/pump-radar/v2/{symbol}")
+async def pump_radar_v2_asset(symbol: str, history: int = Query(180, ge=100, le=1000)):
+    """Single-symbol Pump Radar V2 result from real Binance candles only."""
+    sym = symbol.upper().strip()
+    if not sym.isalnum() or len(sym) > 20:
+        raise HTTPException(status_code=400, detail="Invalid symbol.")
+    if not sym.endswith("USDT"):
+        sym = f"{sym}USDT"
+    client = _http_client()
+    payload = await market_data.fetch_symbol_klines(client, sym, history)
+    if payload.get("exists") is False:
+        raise HTTPException(status_code=404, detail=f"{sym} is not listed as a Binance USDT pair.")
+    if payload.get("unavailable"):
+        raise HTTPException(status_code=503, detail=f"Live candles for {sym} are temporarily unavailable.")
+    candles = _closed_daily_candles(payload.get("candles") or [])
+    result = compute_pump_radar(candles, symbol=sym)
+    if not result.get("ok"):
+        return {**result, "source": payload.get("source"), "live": bool(payload.get("live")), "bars": len(candles)}
+    return {
+        **result,
+        "source": payload.get("source"),
+        "live": bool(payload.get("live")),
+        "bars": len(candles),
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/api/pump-radar/v2/{symbol}/backtest")
+async def pump_radar_v2_backtest(
+    symbol: str,
+    history: int = Query(365, ge=120, le=1000),
+    step: int = Query(1, ge=1, le=7),
+):
+    """Walk-forward single-symbol signal evaluation; every anchor uses past bars only."""
+    sym = symbol.upper().strip()
+    if not sym.isalnum() or len(sym) > 20:
+        raise HTTPException(status_code=400, detail="Invalid symbol.")
+    if not sym.endswith("USDT"):
+        sym = f"{sym}USDT"
+    client = _http_client()
+    payload = await market_data.fetch_symbol_klines(client, sym, history)
+    if payload.get("exists") is False:
+        raise HTTPException(status_code=404, detail=f"{sym} is not listed as a Binance USDT pair.")
+    if payload.get("unavailable"):
+        raise HTTPException(status_code=503, detail=f"Live candles for {sym} are temporarily unavailable.")
+    candles = _closed_daily_candles(payload.get("candles") or [])
+    if len(candles) < 120:
+        return {
+            "ok": False, "symbol": sym, "status": "INSUFFICIENT_HISTORY",
+            "bars": len(candles), "minBars": 120,
+            "source": payload.get("source"), "live": bool(payload.get("live")),
+        }
+
+    from backend.pump_radar_v2 import forward_outcomes
+
+    events: dict[str, list[dict[str, Any]]] = {
+        "DORMANT_VOLUME_ANOMALY": [], "ACTIVE_VOLUME_EXPANSION": []
+    }
+    # Leave seven future candles available for 7D outcome measurement.
+    for anchor in range(100, len(candles) - 7, step):
+        scored = compute_pump_radar(candles[:anchor + 1], symbol=sym)
+        if not scored.get("ok"):
+            continue
+        outcomes = forward_outcomes(candles, anchor)
+        for category, enabled in (
+            ("DORMANT_VOLUME_ANOMALY", scored["signals"]["dormant"]),
+            ("ACTIVE_VOLUME_EXPANSION", scored["signals"]["active"]),
+        ):
+            if enabled:
+                events[category].append({
+                    "date": candles[anchor].get("date"),
+                    "score": scored["scores"]["dormant" if category.startswith("DORMANT") else "active"],
+                    **outcomes,
+                })
+
+    def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        from statistics import mean, median
+        out: dict[str, Any] = {"signals": len(rows)}
+        for field in ("return24hPct", "return72hPct", "return7dPct"):
+            values = [r[field] for r in rows if r.get(field) is not None]
+            out[field] = {
+                "mean": round(mean(values), 3) if values else None,
+                "median": round(median(values), 3) if values else None,
+                "positiveRatePct": round(sum(v > 0 for v in values) / len(values) * 100, 1) if values else None,
+                "samples": len(values),
+            }
+        return out
+
+    return {
+        "ok": True,
+        "symbol": sym,
+        "source": payload.get("source"),
+        "live": bool(payload.get("live")),
+        "bars": len(candles),
+        "walkForward": True,
+        "stepDays": step,
+        "categories": {key: summarize(rows) for key, rows in events.items()},
+        "events": events,
+        "note": "Historical close-to-close returns are descriptive, not predictive. Signals may overlap.",
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
     }
 
 
