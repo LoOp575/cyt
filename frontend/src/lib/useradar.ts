@@ -23,7 +23,7 @@ export interface RadarSummary {
 }
 
 // ---------- HOOK ----------
-const API_URL = "http://localhost:8000"; // ⚠️ SESUAIKAN port backend lu!
+const API_URL = ""; // ⚠️ SESUAIKAN port backend lu!
 
 export function useRadar(symbol: string) {
   const [data, setData]     = useState<RadarSummary | null>(null);
