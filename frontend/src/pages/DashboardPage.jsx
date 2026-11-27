@@ -129,16 +129,24 @@ export default function DashboardPage() {
   const { statuses: radarStatuses } = useRadarAll(rowSymbols); 
 
   const filtered = useMemo(() => {
-    let out = rows.filter((r) => r.ok !== false);
-    if (verdict !== "ALL") out = out.filter((r) => r.verdict === verdict);
-    if (query.trim()) {
-      const q = query.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-      out = out.filter((r) => r.symbol.includes(q));
+  let out = rows.filter((r) => r.ok !== false);
+
+  if (verdict !== "ALL") {
+    if (verdict === "PUMP_RADAR") {
+      out = out.filter((r) => radarStatuses[r.symbol]?.status === "TRIGGER");
+    } else {
+      out = out.filter((r) => r.verdict === verdict);
     }
-    const dir = sortDir === "desc" ? -1 : 1;
-    const getter = SORTERS[sortKey] || SORTERS.signal;
-    return [...out].sort((a, b) => (getter(a) - getter(b)) * dir);
-  }, [rows, verdict, query, sortKey, sortDir]);
+  }
+
+  if (query.trim()) {
+    const q = query.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    out = out.filter((r) => r.symbol.includes(q));
+  }
+  const dir = sortDir === "desc" ? -1 : 1;
+  const getter = SORTERS[sortKey] || SORTERS.signal;
+  return [...out].sort((a, b) => (getter(a) - getter(b)) * dir);
+}, [rows, verdict, query, sortKey, sortDir, radarStatuses]);
 
   const summary = state.payload?.summary;
   const coverage = state.payload?.liveCoverage || null;
