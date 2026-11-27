@@ -14,7 +14,9 @@ import { useLiveTickers } from "../lib/useLiveTickers";
 import { fmtPct, fmtPrice, fmtProb, fmtUsdCompact } from "../lib/format";
 import VerdictBadge from "../components/VerdictBadge";
 import ScoreBar from "../components/ScoreBar";
-import StatTile from "../components/StatTile";
+import StatTile from "../components/StatTile"
+import { useRadarAll } from "../lib/useRadarAll";
+import RadarBadge from "../components/RadarBadge";
 
 const VERDICT_FILTERS = [
   { id: "ALL", label: "All" },
