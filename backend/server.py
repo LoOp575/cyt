@@ -23,8 +23,10 @@ Static note: Vercel serves frontend/build and forwards /api/* here. Locally,
 uvicorn serves the same app; if frontend/build exists it is mounted at /.
 """
 
+# 1) DI PALING ATAS — bareng import lainnya:
+from fastapi import HTTPException      # kalau belum ada
+from radar import radar_summary        # pinjam otak dari radar.py
 from __future__ import annotations
-
 import os
 from collections import deque
 from contextlib import asynccontextmanager
@@ -1723,3 +1725,9 @@ if FRONTEND_BUILD.is_dir():
         if full_path and candidate.is_file() and str(candidate).startswith(str(FRONTEND_BUILD.resolve())):
             return FileResponse(str(candidate))
         return FileResponse(str(FRONTEND_BUILD / "index.html"))
+      @app.get("/api/radar/{symbol}")
+def get_radar(symbol: str):
+    try:
+        return radar_summary(symbol.upper())
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
