@@ -19,6 +19,7 @@ import StatTile from "../components/StatTile";
 const VERDICT_FILTERS = [
   { id: "ALL", label: "All" },
   { id: "LONG", label: "Long candidates" },
+  { id: "PUMP_RADAR", label: "Pump radar" },  
   { id: "WATCH", label: "Watchlist" },
   { id: "NEUTRAL", label: "Neutral" },
   { id: "NO_SIGNAL", label: "No signal" },
