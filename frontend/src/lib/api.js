@@ -95,7 +95,7 @@ export function fetchPumpRadarV2Backtest(symbol, history = 365, step = 1) {
 /* ---------- Pump Radar V2: paginated Binance USD-M Futures universe scan ---------- */
 export function fetchPumpRadarV2Scan(offset = 0, limit = 30) {
   const params = new URLSearchParams({ offset: String(offset), limit: String(limit) });
-  return fetchJSON(\`/api/pump-radar/v2/scan?\${params.toString()}\`);
+  return fetchJSON(`/api/pump-radar/v2/scan?${params.toString()}`);
 }
 
 /* ---------- Fokker–Planck distribution & spoofing lab (additive) ---------- */
