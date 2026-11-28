@@ -426,6 +426,46 @@ async def fetch_symbol_klines(client: httpx.AsyncClient, symbol: str, limit: int
     return {"source": None, "live": False, "exists": None, "unavailable": True, "candles": [], "debug": debug}
 
 
+async def fetch_futures_usdt_perpetual_universe(client: httpx.AsyncClient) -> dict[str, Any]:
+    """Return the complete tradable Binance USDⓈ-M USDT perpetual universe."""
+    exchange_info, tickers = await asyncio.gather(
+        _fetch_json(client, "https://fapi.binance.com/fapi/v1/exchangeInfo"),
+        _fetch_json(client, "https://fapi.binance.com/fapi/v1/ticker/24hr"),
+    )
+    allowed = {
+        str(item.get("symbol") or "").upper()
+        for item in (exchange_info.get("symbols") or [])
+        if item.get("status") == "TRADING"
+        and item.get("contractType") == "PERPETUAL"
+        and item.get("quoteAsset") == "USDT"
+        and item.get("symbol")
+    }
+    rows = []
+    for item in tickers if isinstance(tickers, list) else []:
+        symbol = str(item.get("symbol") or "").upper()
+        if symbol not in allowed:
+            continue
+        rows.append({
+            "symbol": symbol,
+            "lastPrice": _to_float(item.get("lastPrice")),
+            "priceChangePercent": _to_float(item.get("priceChangePercent")),
+            "quoteVolume": _to_float(item.get("quoteVolume")),
+        })
+    rows.sort(key=lambda row: row["quoteVolume"], reverse=True)
+    return {"source": "binance-usdm-futures", "live": True, "data": rows, "universeTotal": len(rows)}
+
+
+async def fetch_futures_daily_klines(
+    client: httpx.AsyncClient, symbol: str, limit: int = 16
+) -> list[dict]:
+    """Fetch real Binance USDⓈ-M Futures daily candles for one USDT perpetual."""
+    raw = await _fetch_json(
+        client,
+        f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=1d&limit={limit}",
+    )
+    return _parse_klines(raw)
+
+
 async def search_binance_symbols(client: httpx.AsyncClient, query: str, max_quote_volume: float = 0.0) -> dict[str, Any]:
     """Cari pair USDT di seluruh daftar bursa, bukan hanya yang sudah dimuat.
 
