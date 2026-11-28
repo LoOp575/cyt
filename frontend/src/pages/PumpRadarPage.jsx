@@ -14,14 +14,14 @@ const fmt = (value, digits = 2) =>
 const fmtVolume = (value) => {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return "—";
   const n = Number(value);
-  if (Math.abs(n) >= 1e9) return \`\${fmt(n / 1e9)} B\`;
-  if (Math.abs(n) >= 1e6) return \`\${fmt(n / 1e6)} M\`;
-  if (Math.abs(n) >= 1e3) return \`\${fmt(n / 1e3)} K\`;
+  if (Math.abs(n) >= 1e9) return `${fmt(n / 1e9)} B`;
+  if (Math.abs(n) >= 1e6) return `${fmt(n / 1e6)} M`;
+  if (Math.abs(n) >= 1e3) return `${fmt(n / 1e3)} K`;
   return fmt(n, 2);
 };
 
-const fmtPct = (value) => value === null || value === undefined ? "—" : \`\${fmt(value)}%\`;
-const fmtRatio = (value) => value === null || value === undefined ? "—" : \`\${fmt(value)}×\`;
+const fmtPct = (value) => value === null || value === undefined ? "—" : `${fmt(value)}%`;
+const fmtRatio = (value) => value === null || value === undefined ? "—" : `${fmt(value)}×`;
 
 const CATEGORY = {
   EXTREME_ANOMALY: { label: "Extreme", tone: "bg-red-100 text-red-800 border-red-200" },
@@ -33,7 +33,7 @@ const CATEGORY = {
 
 function StatusPill({ category }) {
   const item = CATEGORY[category] || { label: category || "Unknown", tone: "bg-stone-100 text-stone-600 border-stone-200" };
-  return <span className={\`inline-flex whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-semibold \${item.tone}\`}>{item.label}</span>;
+  return <span className={`inline-flex whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-semibold ${item.tone}`}>{item.label}</span>;
 }
 
 function SummaryCard({ label, value, note, icon: Icon }) {
@@ -164,7 +164,7 @@ export default function PumpRadarPage() {
             <span className="font-mono text-muted">{scanned.toLocaleString()} / {total ? total.toLocaleString() : "…"}</span>
           </div>
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-stone-100">
-            <div className="h-full rounded-full bg-pine-700 transition-all" style={{ width: \`\${progress}%\` }} />
+            <div className="h-full rounded-full bg-pine-700 transition-all" style={{ width: `${progress}%` }} />
           </div>
           <p className="mt-2 text-[11px] text-muted">Data diproses per batch agar permintaan candle tidak membebani satu request server.</p>
         </section>
@@ -181,7 +181,7 @@ export default function PumpRadarPage() {
         <SummaryCard label="Strong" value={counts.strong} note="3× sampai < 5×" icon={Waves} />
         <SummaryCard label="Anomaly" value={counts.anomaly} note="2× sampai < 3×" icon={AlertTriangle} />
         <SummaryCard label="Increasing" value={counts.increasing} note="1,5× sampai < 2×" icon={BarChart3} />
-        <SummaryCard label="Pair valid" value={validRows.length.toLocaleString()} note={\`Dari \${total.toLocaleString()} kontrak\`} icon={CheckCircle2} />
+        <SummaryCard label="Pair valid" value={validRows.length.toLocaleString()} note={`Dari ${total.toLocaleString()} kontrak`} icon={CheckCircle2} />
       </section>
 
       <section className="mt-8">
@@ -224,7 +224,7 @@ export default function PumpRadarPage() {
                 return (
                   <tr key={row.symbol} className="border-b border-line last:border-0 hover:bg-pine-50/50">
                     <td className="px-4 py-3">
-                      <Link to={\`/token/\${row.symbol}\`} className="font-semibold text-ink hover:text-pine-700 focus-ring rounded">
+                      <Link to={`/token/${row.symbol}`} className="font-semibold text-ink hover:text-pine-700 focus-ring rounded">
                         {row.symbol}
                       </Link>
                       <p className="mt-0.5 text-[10px] text-muted">{m.evaluatedDate ? new Date(Number(m.evaluatedDate)).toISOString().slice(0, 10) : "—"}</p>
@@ -234,7 +234,7 @@ export default function PumpRadarPage() {
                     <td className="px-4 py-3 text-right font-mono font-semibold">{fmtRatio(m.baseRvolDaily)}</td>
                     <td className="px-4 py-3 text-right font-mono">{fmtRatio(m.baseRvol7d)}</td>
                     <td className="px-4 py-3 text-right font-mono">{fmtRatio(m.quoteRvolDaily)}</td>
-                    <td className={\`px-4 py-3 text-right font-mono \${m.priceChange24hPct > 0 ? "text-pine-700" : m.priceChange24hPct < 0 ? "text-red-600" : "text-ink"}\`}>{fmtPct(m.priceChange24hPct)}</td>
+                    <td className={`px-4 py-3 text-right font-mono ${m.priceChange24hPct > 0 ? "text-pine-700" : m.priceChange24hPct < 0 ? "text-red-600" : "text-ink"}`}>{fmtPct(m.priceChange24hPct)}</td>
                     <td className="px-4 py-3 text-right font-mono">{fmtPct(m.buyShareQuotePct)}</td>
                     <td className="px-4 py-3 text-right"><StatusPill category={row.category} /></td>
                   </tr>
@@ -248,7 +248,7 @@ export default function PumpRadarPage() {
         </div>
         <p className="mt-3 text-[11px] text-muted">
           Pair yang gagal diambil atau belum memiliki 15 candle harian ditampilkan sebagai data tidak valid dan tidak ikut ranking.
-          {scanned > 0 ? \` \${scanned - validRows.length} pair dilewati atau belum cukup data.\` : ""}
+          {scanned > 0 ? ` ${scanned - validRows.length} pair dilewati atau belum cukup data.` : ""}
         </p>
       </section>
 
