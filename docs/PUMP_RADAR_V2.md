@@ -1,71 +1,59 @@
-# Pump Radar V2: Detector Specification
+# Pump Radar V2: Daily Base Volume Anomaly
 
-## Scope and safety
+## Purpose
 
-This is an additive detector. It does not replace `backend/radar.py`, alter the Screener, or change existing API routes. The engine is pure computation and accepts closed daily candles. A later integration step must supply the existing candle schema and persist Track Record outcomes.
+Pump Radar V2 scans the Binance USD-M Futures USDT perpetual universe and detects unusual daily token-unit trading activity relative to each contract's own recent history. The first trigger is Base Volume anomaly. Price movement and Quote Volume are supporting context, not mandatory gates.
 
-## Required candle fields
+This is additive. The legacy Radar and Screener are not replaced.
 
-`date, open, high, low, close, volume, quoteVolume, takerBuyBase, takerBuyQuote`
+## Data source and scan behavior
 
-- Base Volume is token quantity.
-- Quote Volume is notional turnover (USDT for the Binance USDT market).
-- Taker-buy share is aggressor-side flow, not proof of beneficial ownership or accumulation.
-- The in-progress daily candle must be removed before scoring.
+- Universe: Binance USD-M Futures, contractType=PERPETUAL, quoteAsset=USDT, status=TRADING.
+- Daily candles: Binance Futures fapi/v1/klines, interval 1d.
+- Only completed UTC daily candles are evaluated.
+- Scanner API is paginated into batches to keep each serverless request bounded.
+- The frontend scans all pages sequentially when Pump Radar V2 opens if no completed scan is cached for the latest closed UTC candle date. It also supports a manual full rescan.
+- The browser caches the completed daily snapshot in localStorage. This is not durable server-side history and does not run as a background job while the page is closed.
 
-## Detector A: Dormant Volume Anomaly
+## Primary detector: daily Base Volume RVOL
 
-Initial experimental conditions (all required):
-- 90D drawdown <= -15%.
-- Daily Base RVOL >= 3.0x.
-- Daily Quote RVOL >= 3.0x.
-- 7D Quote RVOL >= 1.5x.
-- 7D price return between -5% and +5%.
+For the latest fully closed daily candle:
 
-## Detector B: Active Volume Expansion
+Base RVOL Daily = latest closed daily Base Volume / mean(Base Volume of the prior 7 closed daily candles)
 
-Initial experimental conditions (all required):
-- Daily Base RVOL >= 2.5x.
-- Daily Quote RVOL >= 2.5x.
-- 7D Quote RVOL >= 1.5x.
-- 24H price return >= +3%.
-- 7D price return > 0%.
+The evaluated candle is excluded from its own baseline.
 
-## Formula definitions
+### Initial experimental categories
 
-- Daily RVOL = current closed-day volume / median of the prior 30 closed daily volumes.
-- 7D RVOL = sum(last 7 closed daily volumes) / (7 x median of the 30 closed daily volumes immediately BEFORE that 7D window).
-- 90D drawdown = latest close / highest high over last 90 closed candles - 1.
-- Buy share = takerBuyQuote / quoteVolume. Base equivalent is also exposed.
-- Price Demand Efficiency = 7D price return (%) / 7D Quote Volume growth (%). It is descriptive only and is not used as a standalone trigger.
-- Volume/price distortion = 7D Quote Volume growth minus 7D Base Volume growth. A large gap can reflect price/mix effects, not organic unit demand.
+| Ratio | Category |
+|---:|---|
+| < 1.5x | Normal |
+| 1.5x to < 2.0x | Increasing |
+| 2.0x to < 3.0x | Anomaly |
+| 3.0x to < 5.0x | Strong Anomaly |
+| >= 5.0x | Extreme Anomaly |
 
-The baseline excludes the evaluated candle to avoid self-inflation. The engine requires 100 closed candles.
+These are initial research thresholds, not statistically validated trading signals. Thresholds should later be evaluated across historical symbols and liquidity buckets.
 
-## Scores (0-100, heuristic and uncalibrated)
+## Secondary context
 
-Dormant weights: Base RVOL 25%, Quote RVOL 25%, 7D Quote RVOL 15%, taker-buy share 15%, 90D drawdown 10%, price containment 10%.
+- Base RVOL 7D: sum of the latest 7 closed daily Base Volumes / sum of the 7 closed daily Base Volumes immediately before that window.
+- Quote RVOL Daily: latest closed daily Quote Volume / mean Quote Volume of the prior 7 closed daily candles.
+- Quote RVOL 7D: latest 7D Quote Volume / previous 7D Quote Volume.
+- Buy Share Quote: takerBuyQuote / quoteVolume. Aggressor-side flow is not proof of beneficial ownership or whale accumulation.
+- Price changes 24H and 7D provide movement context. They do not suppress the primary Base Volume anomaly trigger.
 
-Active weights: Base RVOL 20%, Quote RVOL 25%, 7D Quote RVOL 15%, taker-buy share 15%, price momentum 25%.
+## Minimum history and handling
 
-Scores are ranking aids, not probabilities. Trigger eligibility and score are separate outputs. Do not describe a high score as a guaranteed pump or whale signal.
+- 15 closed daily candles are required for the two consecutive 7D windows plus daily baseline.
+- In-progress UTC daily candle is excluded.
+- Missing/failed candles for a pair are reported as skipped; synthetic candles are never used.
+- Base Volume is token quantity; Quote Volume is notional turnover in quote asset units (USDT for these contracts).
 
-## Historical evaluation
+## Limitations
 
-For each historical signal, calculate close-to-close returns after 24H, 72H, and 7D. Run a walk-forward backtest over at least 120 days, preferably longer, and report:
-- number of signals per category;
-- median and mean forward returns;
-- percentage of positive outcomes;
-- maximum adverse excursion if OHLC data is available;
-- false-positive rate and signal overlap;
-- performance by liquidity bucket.
-
-Do not tune parameters on the same dates used for final evaluation. Use a chronological train/validation/test split.
-
-## Planned integration (not included in this initial module)
-
-1. Add a new route without changing existing routes.
-2. Reuse the existing Binance candle/data layer; do not create a second market-data stack.
-3. Add frontend category tabs and metric detail rows.
-4. Persist signal snapshots and outcomes using the project's existing storage only after its schema is inspected.
-5. Compare V2 with legacy Radar before making V2 the default.
+- The scan is initiated by the frontend on page open after the latest daily close, or manually. It is not a server-side scheduled/background scan.
+- Browser cache is per device/browser and can be cleared.
+- The first implementation does not persist a server-side Track Record.
+- A volume anomaly can be caused by news, liquidation, arbitrage, market-maker activity, or other flows. It is not a buy/entry signal.
+- Funding rate, open interest, order book depth, spread, and 1H/15M entry confirmation are not part of this first scanner iteration.
